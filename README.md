@@ -162,16 +162,6 @@ already trusts (its Proxy `trustedCA`), set `openshift.trustedCABundle: true`.
 OpenShift fills a ConfigMap the chart creates, and the controller uses it. This
 replaces `qumulo.caBundle`; do not set both.
 
-## Upgrade from a release made before OpenShift support
-
-`helm upgrade --reuse-values` works. The node pods of the old release never
-started on OpenShift; after the upgrade they start without any SCC step.
-
-An upgrade that fails part-way needs `--force` to repair
-(`--force-replace --server-side=false` for a release Helm 4 installed), or a
-delete-and-upgrade by hand — see
-[If an upgrade fails part-way](../operate/openshift-operations.md#if-an-upgrade-fails-part-way).
-
 ## A StorageClass names a Secret that does not exist
 
 The controller may read only the Secrets its classes name, so for any other name
@@ -219,9 +209,3 @@ RHCOS; see [Read-only volumes](../features/mount-options.md#read-only-volumes).
 another node from writing — this driver has no attach stage, so Kubernetes does
 not enforce it. Use `ReadWriteOncePod`, which Kubernetes enforces itself. See
 [Access modes](../features/access.md#share-one-volume-between-many-pods).
-
-## Next
-
-- [Operate on OpenShift](../operate/openshift-operations.md) — SCC auditing, upgrades, monitoring, uninstall
-- [Chart values: OpenShift](../reference/chart-values.md#openshift) — every `openshift.*` value
-- [Security](../features/security.md#openshift-scc-admission) — why the node plugin is privileged and the controller is not
