@@ -25,7 +25,7 @@ and apply the output.
 # <-- EDIT: --version is the release's, from Qumulo or the chart package page
 cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin
 
-helm template qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> \
   --namespace qumulo-csi \
   --values qumulo-values.yaml \
@@ -69,7 +69,7 @@ renders no Secret. Create them first, as in
 Re-render from the same values file on every upgrade, and diff before applying:
 
 ```bash
-helm template qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> \
   --namespace qumulo-csi --values qumulo-values.yaml > qumulo-csi.new.yaml
 diff -u qumulo-csi.yaml qumulo-csi.new.yaml

@@ -63,7 +63,7 @@ storageClasses:
 ```
 
 ```bash
-helm upgrade qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm upgrade qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> \
   --namespace qumulo-csi \
   --values qumulo-values.yaml

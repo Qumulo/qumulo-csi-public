@@ -8,11 +8,11 @@ where that part fits.
 # qumulo-values.yaml
 image:
   controller:
-    repository: ghcr.io/qumulo/qumulo-csi-driver-controller
+    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller
     tag: ""                        # leave empty -- see the note below
     pullPolicy: ""                 # leave empty
   node:
-    repository: ghcr.io/qumulo/qumulo-csi-driver-node
+    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node
     tag: ""
     pullPolicy: ""
   pullSecrets:                     # required: the images are private
@@ -44,7 +44,7 @@ storageClasses:
 Install it with:
 
 ```bash
-helm install qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> \
   --namespace qumulo-csi \
   --values qumulo-values.yaml

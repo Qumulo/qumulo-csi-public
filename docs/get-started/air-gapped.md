@@ -22,11 +22,11 @@ cat ~/.ghcr-pat | docker login ghcr.io -u <github-user> --password-stdin
 # <-- EDIT: your registry, and <commit> from the release
 docker buildx imagetools create \
   -t registry.example.com/qumulo-csi-driver-controller:0.1.0-<commit> \
-  ghcr.io/qumulo/qumulo-csi-driver-controller:0.1.0-<commit>
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.0-<commit>
 
 docker buildx imagetools create \
   -t registry.example.com/qumulo-csi-driver-node:0.1.0-<commit> \
-  ghcr.io/qumulo/qumulo-csi-driver-node:0.1.0-<commit>
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.0-<commit>
 ```
 
 !!! warning "Use `imagetools create`, not pull-and-push"
@@ -49,7 +49,7 @@ Where no host can reach both sides, move an OCI layout on media:
 ```bash
 # outside
 skopeo copy --all \
-  docker://ghcr.io/qumulo/qumulo-csi-driver-node:0.1.0-<commit> \
+  docker://ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.0-<commit> \
   oci-archive:qumulo-csi-driver-node-0.1.0-<commit>.tar
 
 # inside
@@ -68,7 +68,7 @@ those mirrored too. List exactly what your values file resolves to rather than
 working from memory:
 
 ```bash
-helm template qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> --values qumulo-values.yaml \
   | grep -E '^\s+image:' | sort -u
 ```
@@ -119,7 +119,7 @@ image:
 ```bash
 # outside: pull the published chart as a file
 cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin   # <-- EDIT
-helm pull oci://ghcr.io/qumulo/charts/qumulo-csi-driver --version 0.1.0+<commit> # <-- EDIT
+helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.0+<commit> # <-- EDIT
 
 # inside
 helm install qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \

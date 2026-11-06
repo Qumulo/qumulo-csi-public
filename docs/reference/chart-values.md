@@ -24,9 +24,9 @@ Release-wide settings, set as Helm values. Per-volume settings are
 
 | Value | Type | Default | Description |
 |---|---|---|---|
-| `image.controller.repository` | string | `ghcr.io/qumulo/qumulo-csi-driver-controller` | |
+| `image.controller.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | |
 | `image.controller.tag` | string | the chart's `appVersion` | may carry `@sha256:<digest>` |
-| `image.node.repository` | string | `ghcr.io/qumulo/qumulo-csi-driver-node` | |
+| `image.node.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | |
 | `image.node.tag` | string | the chart's `appVersion` | |
 | `image.pullSecrets` | list | `[]` | `[{name: ghcr-pull}]` |
 

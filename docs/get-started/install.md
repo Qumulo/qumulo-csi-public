@@ -34,9 +34,9 @@ that version with the release; if you do not have it, ask through
 
 | What | Where | Version |
 |---|---|---|
-| Chart | `oci://ghcr.io/qumulo/charts/qumulo-csi-driver` | `0.1.0+<commit>` |
-| Controller image | `ghcr.io/qumulo/qumulo-csi-driver-controller` | `0.1.0-<commit>` |
-| Node image | `ghcr.io/qumulo/qumulo-csi-driver-node` | `0.1.0-<commit>` |
+| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` | `0.1.0+<commit>` |
+| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.0-<commit>` |
+| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.0-<commit>` |
 
 The chart pulls the images of its own build, so you never set an image tag.
 All three are visible to members of the Qumulo GitHub organization only, so
@@ -88,7 +88,7 @@ all come later, when you
 ```yaml
 # qumulo-values.yaml
 image:
-  # The chart already pulls ghcr.io/qumulo/qumulo-csi-driver-{controller,node}
+  # The chart already pulls ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-{controller,node}
   # at the chart's version. Set repository only for your own registry.
   pullSecrets:
     - name: ghcr-pull
@@ -138,7 +138,7 @@ images it was built with.
 
 ```bash
 # <-- EDIT: --version is the one from step 2
-helm install qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> \
   --namespace qumulo-csi \
   --values qumulo-values.yaml
