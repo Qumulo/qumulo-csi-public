@@ -1,7 +1,10 @@
 site_name: Qumulo CSI Driver
 site_description: >-
   Provision Kubernetes persistent volumes on Qumulo storage over NFS.
-site_url: https://qumulo.github.io/qumulo-csi-driver/
+site_url: https://qumulo.github.io/qumulo-csi-public/
+repo_url: https://github.com/Qumulo/qumulo-csi-public
+repo_name: Qumulo/qumulo-csi-public
+edit_uri: edit/main/docs/
 copyright: Copyright &copy; Qumulo, Inc.
 
 theme:
@@ -69,9 +72,10 @@ markdown_extensions:
 plugins:
   - search
 
-# The repository's engineering notes live under docs/engineering/ but are written
-# for GitHub, with links into charts/, pkg/ and test/. They are excluded from the
-# site rather than rewritten, so those links keep working where they are read.
+# Engineering notes (docs/engineering/) and dated regression results
+# (docs/regression-results/) are not published here. They are kept out of this
+# repository entirely; these rules stay as a guard so that a stray copy of
+# either directory still cannot reach the built site.
 exclude_docs: |
   /engineering/
   /regression-results/

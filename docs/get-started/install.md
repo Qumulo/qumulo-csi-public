@@ -151,5 +151,5 @@ Helm cannot tell which is newest on its own.
     That chart is for development. It is always version `0.1.0` whatever was
     built, and asks for the moving `0.1.0` image tag rather than one build, so
     `helm history` cannot tell builds apart and the image can come from a
-    different commit than the chart. Build and packaging are covered in the
-    repository's own `docs/engineering/csi-dev.md`.
+    different commit than the chart. Install a released chart from the registry
+    instead, as shown above.

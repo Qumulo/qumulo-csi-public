@@ -178,7 +178,8 @@ kubectl -n qumulo-csi get --raw \
 
 ## Dashboard
 
-A starter Grafana dashboard ships in `test/grafana/qumulo-csi.json`. Import it
+A starter Grafana dashboard ships with these docs:
+[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json). Import it
 and pick a Prometheus datasource; it has a `datasource` variable and needs no
 editing.
 

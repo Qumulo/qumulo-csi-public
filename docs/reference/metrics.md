@@ -300,8 +300,10 @@ Thresholds: `metrics.prometheusRule.recoveryPointAgeSeconds` (900),
 
 ## Dashboard
 
-`test/grafana/qumulo-csi.json`. Import it and pick a Prometheus datasource; it
-has a `datasource` variable and needs no editing.
+A starter Grafana dashboard ships with these docs:
+[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json). Import it
+and pick a Prometheus datasource; it has a `datasource` variable and needs no
+editing.
 
 ## What is not exported
 
