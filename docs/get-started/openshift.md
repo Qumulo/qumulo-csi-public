@@ -4,6 +4,10 @@ The driver installs on OpenShift with the same `helm install` as on any other
 cluster. There is no SCC step: the chart makes the security settings the node
 plugin needs and grants them to the node plugin alone.
 
+This page covers installing from the **public registry**, which is how the
+chart and images are distributed: the cluster pulls them straight from the
+internet, with no mirror and no pull secret.
+
 Work through [Install the driver](install.md) first. This page lists only what
 is different on OpenShift. For day-two work — auditing the SCC, upgrades,
 proxy and CA failures, monitoring and uninstall — see
@@ -36,7 +40,7 @@ finds OpenShift by itself (`openshift.enabled: auto`) and then:
 | Pod | SCC | Why |
 |---|---|---|
 | Controller | `restricted-v2`, OpenShift's default | It only talks HTTPS to the Qumulo API. The chart drops its fixed user ID so OpenShift can give it one from the project's range. |
-| Node plugin | its own SCC, `<namespace>-<release>-qumulo-csi-driver-node` | It mounts NFS on the host, so it must be privileged, on the host network and use host paths. The SCC allows that and nothing more, and only the node service account may use it. |
+| Node plugin | its own SCC, `qumulo-csi-qumulo-csi-driver-node` for the install above (in general `<namespace>-<release>-qumulo-csi-driver-node`; the namespace is left out when the release is named after it) | It mounts NFS on the host, so it must be privileged, on the host network and use host paths. The SCC allows that and nothing more, and only the node service account may use it. |
 
 Each pod names its SCC (`openshift.io/required-scc`), so OpenShift never picks
 another SCC that a cluster admin granted for something else.
@@ -44,16 +48,50 @@ another SCC that a cluster admin granted for something else.
 The exact permission set, and how to hand SCC management to a cluster admin,
 are in [Operate on OpenShift](../operate/openshift-operations.md#audit-what-the-charts-scc-allows).
 
+## Before you start
+
+The chart and both images are pulled from a public registry, so there is no
+pull secret and no mirroring step. What the cluster needs:
+
+- The workers can reach the registry. An OpenShift cluster behind a proxy
+  reaches it through the cluster-wide Proxy, which the kubelet already uses —
+  that is separate from the controller's own proxy settings, below.
+- The machine running `helm` can reach the same registry. Helm pulls the
+  chart itself; the kubelet pulls the images.
+- A project to install into, and a `values.yaml` with your Qumulo cluster
+  and StorageClass settings, from [Install the driver](install.md).
+
 ## Install
 
 ```bash
 oc new-project qumulo-csi
-helm install qumulo-csi oci://ghcr.io/qumulo/charts/qumulo-csi-driver \
+
+helm install qumulo-csi \
+  oci://<public-registry>/<org>/charts/qumulo-csi-driver \
   --version 0.1.0+<commit> -n qumulo-csi -f values.yaml
 ```
 
-That is all. When `helm template` renders for GitOps, it cannot see the
-cluster, so set `openshift.enabled: true` there.
+Qumulo support gives you the registry and the exact `--version` for your
+release.
+
+The chart published to the public registry carries the public image
+repositories as its defaults, so nothing in `values.yaml` points at images:
+leave `image.controller.repository`, `image.node.repository` and
+`image.pullSecrets` unset. Confirm what the install will pull before you run
+it:
+
+```bash
+helm show values oci://<public-registry>/<org>/charts/qumulo-csi-driver \
+  --version 0.1.0+<commit> | grep -A2 'repository:'
+```
+
+That is all there is to it. There is no SCC step: the chart creates the node
+plugin's SCC and grants it to the node service account.
+
+!!! note "Rendering offline for GitOps"
+    `helm template`, Argo CD and any other render that cannot see the cluster
+    does not detect OpenShift, so the SCC is silently left out. Set
+    `openshift.enabled: true` in `values.yaml` for those.
 
 ## Check the install
 
@@ -66,24 +104,94 @@ The controller pods show `restricted-v2`; the node pods show the chart's SCC.
 The install notes (`helm status qumulo-csi -n qumulo-csi`) print both commands
 with your names filled in.
 
+Then run the chart's tests:
+
+```bash
+helm test qumulo-csi -n qumulo-csi
+```
+
+The readiness test always runs: it checks that the controller is Available,
+every node pod is Ready and the driver is registered on the nodes, using
+Red Hat's `ose-cli` image under the controller's SCC (`restricted-v2` unless
+you set `openshift.controllerSCC`). To also prove a volume works end to end,
+set `tests.storageClass` to a class first: a pod under the same SCC then
+writes a file to a 1 GiB volume on it and reads it back. That pod runs only
+on nodes the node plugin runs on (it takes `node.nodeSelector`,
+`node.tolerations` and `node.affinity`). The class must
+let a non-root user write (`mountPermissions: "0777"`, the default). A pass
+deletes the test pods, so leave out `--logs` (Helm would find no log and exit
+1). A failure keeps the pod: `oc -n qumulo-csi logs <pod>` shows why.
+
 !!! note "Node pods may be refused for a few seconds"
     On a fresh project the DaemonSet can be created before the SCC and its
     grant are in effect. The DaemonSet retries and the pods are admitted.
     See [The SCC settles after the install starts](../operate/openshift-operations.md#the-scc-settles-after-the-install-starts).
 
+## Clusters with their own SCCs and a policy engine
+
+Some clusters do not let workloads use `restricted-v2`, do not let a workload
+chart create SCCs, or use a policy engine such as Gatekeeper so that only a
+platform team may create RoleBindings, ClusterRoleBindings or Helm's release
+Secrets. The chart supports all of these. A full example is in
+`test/openshift/values/openshift-values-gatekeeper.yaml`:
+
+```yaml
+openshift:
+  enabled: true
+  # Your cluster's restricted SCC. A name starting with "restricted" makes
+  # the chart leave the controller's uid out, so OpenShift assigns one from
+  # the namespace's range. For another name that also assigns a uid, add
+  # assignControllerUID: true.
+  controllerSCC: restricted-csi
+  nodeSCC:
+    create: false            # your platform team makes and grants it
+    name: qumulo-csi-node
+rbac:
+  createBindings: false      # your platform team applies every binding
+node:
+  nodeSelector:
+    hydra_storage: "true"    # quoted: a node selector value is a string
+controller:
+  nodeSelector:
+    hydra_storage: "true"
+```
+
+Before the install, the platform team:
+
+1. Creates the node SCC and grants it to the node service account
+   ([Let your cluster admin manage the SCC](../operate/openshift-operations.md#let-your-cluster-admin-manage-the-scc)).
+2. Applies the bindings the chart would have made
+   ([Bindings applied by a platform team](../operate/openshift-operations.md#bindings-applied-by-a-platform-team)).
+
+Then install as usual. If Helm's release Secrets are also blocked, install
+with `HELM_DRIVER=configmap`
+([Helm release storage](../operate/openshift-operations.md#helm-release-storage)).
+The install stops before it changes anything, naming each binding that is
+missing or wrong.
+
+!!! warning "Use a values file or `--set-string` for node selectors"
+    `--set node.nodeSelector.hydra_storage=true` makes the value a boolean,
+    which the API server refuses. Quote it in a values file, as above, or use
+    `--set-string`.
+
 ## The node plugin binds a host port
 
-The node DaemonSet runs with `hostNetwork: true`, so its livenessprobe's
-`/healthz` port is a **host** port on every worker:
+The node DaemonSet runs with `hostNetwork: true`, so the livenessprobe's and
+the registrar's `/healthz` ports are **host** ports on every worker:
 
 ```yaml
 node:
-  healthPort: 29653     # the default
+  healthPort: 29653            # the default
+  registrarHealthPort: 0       # the default: healthPort + 6, so 29659
 ```
 
-It must not collide with anything else on your workers, and 29653 is also the
-upstream `csi-driver-nfs` node health port — a cluster running both needs a
-different number here. The chart's node SCC allows host ports; an SCC supplied
+They must not collide with anything else on your workers. A second release of
+this chart on the same cluster needs its own `healthPort` (and, with metrics
+on, its own `metrics.port.node`); its registrar port then follows as
+`healthPort + 6`. The install or upgrade is refused, naming the DaemonSet
+that holds the port, if another DaemonSet already uses one of these ports.
+29653 is also the upstream `csi-driver-nfs` node health port — a cluster
+running both needs a different number there. The chart's node SCC allows host ports; an SCC supplied
 by your cluster admin must do the same.
 
 ## Clusters behind a proxy
@@ -112,42 +220,14 @@ already trusts (its Proxy `trustedCA`), set `openshift.trustedCABundle: true`.
 OpenShift fills a ConfigMap the chart creates, and the controller uses it. This
 replaces `qumulo.caBundle`; do not set both.
 
-## Disconnected clusters and mirrored registries
-
-A disconnected OpenShift cluster pulls the chart and both images from your
-mirror. Follow [Install in an air-gapped environment](air-gapped.md) for the
-mirroring itself, then tell the cluster where the images moved to:
-
-```yaml
-apiVersion: config.openshift.io/v1
-kind: ImageDigestMirrorSet
-metadata:
-  name: qumulo-csi
-spec:
-  imageDigestMirrors:
-    - source: ghcr.io/qumulo
-      mirrors:
-        - mirror.example.com/qumulo
-```
-
-`ImageContentSourcePolicy` works on clusters that still use it; both are applied
-by the Machine Config Operator and roll the nodes.
-
-The chart itself is pulled by Helm, not by the kubelet, so a mirror set does not
-redirect it — give `helm install` the mirrored OCI reference directly.
-
-!!! note "The mirror's own CA"
-    If your mirror presents a certificate signed by the cluster's trusted CA,
-    the kubelet already trusts it. That is separate from
-    `openshift.trustedCABundle`, which is only about the controller's calls to
-    the **Qumulo REST API**.
-
 ## Upgrade from a release made before OpenShift support
 
 `helm upgrade --reuse-values` works. The node pods of the old release never
 started on OpenShift; after the upgrade they start without any SCC step.
 
-An upgrade that fails part-way needs `--force` to repair — see
+An upgrade that fails part-way needs `--force` to repair
+(`--force-replace --server-side=false` for a release Helm 4 installed), or a
+delete-and-upgrade by hand — see
 [If an upgrade fails part-way](../operate/openshift-operations.md#if-an-upgrade-fails-part-way).
 
 ## A StorageClass names a Secret that does not exist

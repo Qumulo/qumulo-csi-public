@@ -60,7 +60,7 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | `controller.podDisruptionBudget.enabled` | bool | `true` | `maxUnavailable: 1`, rendered only with >1 replica |
 | `controller.strategy` | map | `{}` | verbatim; `Recreate` when leader election is off |
 | `controller.topologySpreadConstraints` | list | `[]` | verbatim |
-| `controller.resources`, `controller.sidecarResources` | map | see `values.yaml` | |
+| `controller.resources`, `controller.sidecarResources` | map | driver 1Gi, each sidecar 128Mi; memory limit = request, ephemeral-storage limit 500Mi | no CPU limit; see `values.yaml` for the sizing |
 | `controller.priorityClassName` | string | `system-cluster-critical` | |
 | `controller.nodeSelector`, `tolerations`, `affinity` | | `{}`/`[]` | the default affinity is a soft hostname anti-affinity |
 | `controller.terminationGracePeriodSeconds` | int | `90` | |
@@ -87,7 +87,8 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | `node.kerberos.keytabPath` | path | `/etc/krb5.keytab` | |
 | `node.kerberos.krb5ConfPath` | path | `/etc/krb5.conf` | |
 | `node.kerberos.hostPathType` | enum | `FileOrCreate` | `File` refuses the plugin on a node without the files |
-| `node.resources` | map | requests only, per container | no CPU limits: a throttled unmount is a stuck pod |
+| `node.resources` | map | driver 256Mi, registrar and liveness probe 64Mi; memory limit = request, ephemeral-storage limit 500Mi | no CPU limits: a throttled unmount is a stuck pod |
+| `node.registrarHealthPort` | int | `0` → `node.healthPort` + 6 (29659) | the registrar's `/healthz`, read by its own probes; a host port on the node's address, distinct from `node.healthPort`. Derived by default so a second release, with its own `node.healthPort`, gets its own |
 | `node.terminationGracePeriodSeconds` | int | `30` | |
 
 !!! warning "A PriorityClass's `value` and `preemptionPolicy` are immutable"
@@ -145,6 +146,9 @@ Release-wide settings, set as Helm values. Per-volume settings are
 !!! warning "The node metrics port is a host port"
     The node DaemonSet is `hostNetwork: true`. 29652 and `node.healthPort`
     (29653) are the livenessprobe sidecars; the chart refuses any collision.
+    An install or upgrade is also refused when another DaemonSet on the
+    cluster (a second release of this chart, `csi-driver-nfs`) already holds
+    `node.healthPort`, `node.registrarHealthPort` or `metrics.port.node`.
 
 ## RBAC
 
@@ -152,6 +156,8 @@ Release-wide settings, set as Helm values. Per-volume settings are
 |---|---|---|---|
 | `rbac.extraSecrets` | list | `[]` | Secrets named only outside the chart |
 | `rbac.clusterWideSecrets` | bool | `false` | the old cluster-wide `get` on Secrets |
+| `rbac.createBindings` | bool | `true` | render the chart's RoleBindings and ClusterRoleBindings; `false` renders none, for a platform team to apply ([Bindings applied by a platform team](../operate/openshift-operations.md#bindings-applied-by-a-platform-team)) |
+| `rbac.checkBindings` | bool | `true` | with `createBindings: false`, stop the install while a required binding is missing or wrong; read-only. `false` skips the check, for an install identity that may not read bindings |
 
 !!! warning "Each Secret's namespace must exist at install time"
     The Role is created in it.
@@ -161,12 +167,30 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | Value | Type | Default | Description |
 |---|---|---|---|
 | `openshift.enabled` | `auto`, `true`, `false` | `auto` | `auto` turns on when the cluster serves `SecurityContextConstraints`; set `true` for `helm template` and GitOps |
-| `openshift.controllerSCC` | string | `restricted-v2` | the SCC the controller pods are pinned to; for a `restricted*` SCC the fixed uid is dropped so OpenShift assigns one |
+| `openshift.controllerSCC` | string | `restricted-v2` | the SCC the controller pods and the `helm test` pods are pinned to, for example your own `restricted-csi` |
+| `openshift.assignControllerUID` | `auto`, `true`, `false` | `auto` | leave the controller's fixed uid out so OpenShift assigns one from the namespace range. `auto`: when `controllerSCC` starts with `restricted`; `true`: always (a custom SCC with another name that assigns a uid); `false`: never (an SCC that lets the pod choose, such as `nonroot-v2`) |
 | `openshift.nodeSCC.create` | bool | `true` | the chart makes the node SCC and grants it to the node service account only |
-| `openshift.nodeSCC.name` | string | `""` → `<namespace>-<release>-qumulo-csi-driver-node` | with `create: false`, the name of an SCC your cluster admin made |
+| `openshift.nodeSCC.name` | string | `""` → `<namespace>-<release>-qumulo-csi-driver-node`, or `<release>-qumulo-csi-driver-node` when the release is named after its namespace | with `create: false`, the name of an SCC your cluster admin made |
 | `openshift.trustedCABundle` | bool | `false` | trust the cluster's injected CA bundle for the Qumulo API; not with `qumulo.caBundle` or `insecureSkipTlsVerify` |
 
 See [Install on OpenShift](../get-started/openshift.md).
+
+## `helm test`
+
+| Value | Type | Default | Description |
+|---|---|---|---|
+| `tests.ready.enabled` | bool | `true` | the readiness test and its read-only ServiceAccount and RBAC |
+| `tests.ready.image` | string | `""` → `ose-cli-rhel9:v4.22` on OpenShift, `origin-cli:4.22` elsewhere | needs bash and kubectl |
+| `tests.storageClass` | string | `""` | turns on the volume test, on this class |
+| `tests.size` | quantity | `1Gi` | the volume test's claim size |
+| `tests.image` | string | `registry.access.redhat.com/ubi9/ubi-minimal:9.8` | the volume test's image: a POSIX shell, `cat` and `sync` |
+| `tests.imagePullPolicy` | `Always`, `IfNotPresent`, `Never` | `IfNotPresent` | |
+
+The readiness test checks the controller is Available, every node pod is Ready
+and the driver is registered in CSINode, waiting up to 240 s for a rollout
+still in progress; it provisions nothing. The volume test
+pod runs as a non-root user, so its class must let one write
+(`mountPermissions: "0777"`, the default). Run `helm test` without `--logs`.
 
 ## Class lists
 

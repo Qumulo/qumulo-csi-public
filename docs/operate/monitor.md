@@ -88,6 +88,12 @@ Full list with labels and update conditions: [Metrics](../reference/metrics.md).
     its last request**. RPC counts and latency carry no such caveat. Do not
     build an alert that assumes a gauge is current.
 
+    The recovery-point age is the exception that is easiest to misread: it
+    does not freeze, it keeps **climbing** on the controller's clock from the
+    recovery point the last read produced, and drops back when a fresh read
+    lands. A stale one therefore looks alive. See
+    [Replication](../reference/metrics.md#replication).
+
 !!! warning "`/healthz` means 'this process is alive'"
     It says nothing about any array. Alert on `csi_qumulo_api_reachable`
     instead of restarting on it.

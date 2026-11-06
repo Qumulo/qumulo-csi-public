@@ -62,6 +62,9 @@ off entirely. Do not leave it on in production.
 The controller runs as a non-root user and touches no filesystem. The node
 pods do need root and privilege, because mounting on the host requires it —
 that is a property of NFS mounting, not a choice this driver made.
+A policy engine will flag those settings; see
+[Policy engines](#policy-engines-gatekeeper-kyverno) for each one and a narrow
+exemption.
 
 The controller is allowed to read exactly the Secrets your classes name,
 nothing wider. If you create a class outside the chart, add its Secret to
@@ -111,3 +114,108 @@ or not the node pod is privileged.
 
 See [Operate on OpenShift](../operate/openshift-operations.md#audit-what-the-charts-scc-allows)
 for the exact SCC and how to audit it.
+
+## Policy engines (Gatekeeper, Kyverno)
+
+A policy engine that enforces the Kubernetes Pod Security Standards flags the
+node plugin, and it is right to: the node pod mounts NFS in the host's mount
+namespace, which no unprivileged pod can do. Exempt the node pod from the rules
+below and nothing else. The controller and the `helm test` pods pass the
+`restricted` standard as they are and need no exemption.
+
+What the node pod (DaemonSet `<release>-qumulo-csi-driver-node`) asks for, and why:
+
+| Setting | Container | Why it is needed |
+|---|---|---|
+| `privileged: true` | `qumulo-csi-driver` | `mount(8)` and `umount(8)` in the host's mount namespace. Privileged includes `SYS_ADMIN`; it cannot be narrowed to `SYS_ADMIN` alone, because Kubernetes allows `Bidirectional` mount propagation only in a privileged container. |
+| `hostPath` `/var/lib/kubelet`, mount propagation `Bidirectional` | `qumulo-csi-driver` | The NFS mount made in the pod must appear on the host, where the kubelet hands it to the application pod. `Bidirectional` requires a privileged container. |
+| `hostPath` `/var/lib/kubelet/plugins/csi.qumulo.com` | all three | The CSI socket the kubelet calls. |
+| `hostPath` `/var/lib/kubelet/plugins_registry` | `node-driver-registrar` | Registers the driver with the kubelet. |
+| `hostNetwork: true`, so its ports are host ports: `node.healthPort` (29653), `node.registrarHealthPort` (29659) and, with metrics on, `metrics.port.node` (29655) | pod | The NFS mounts are made from the node's own addresses, the ones the array's export allows. |
+| runs as uid 0 | `qumulo-csi-driver`, `node-driver-registrar` | Mounting needs root; the registrar writes its socket into the kubelet's root-owned `plugins_registry`. |
+| writable root filesystem | `qumulo-csi-driver` | `mount(8)` and `mount.nfs` write state inside the image. |
+
+What it does **not** ask for: host PID or IPC, added capabilities (the two
+sidecars drop all of them, with no privilege escalation and a read-only root),
+or any volume type besides `hostPath` and `emptyDir`. Its seccomp profile is
+`RuntimeDefault`. A policy that flags one of those has found a change, not this
+list.
+
+Everything else a pod-security or best-practice policy usually asks for is
+already in the chart, on every container of both pods: a liveness and a
+readiness probe, a CPU and a memory request, a memory limit equal to the
+request, and an ephemeral-storage limit. On the default OpenShift render the
+Gatekeeper library's `general` and `pod-security-policy` policies (their
+sample constraints) all pass except the six node rules above and one more:
+
+- `containerresourceratios`: its sample constraint (`cpuRatio: "10"`) needs a
+  CPU limit, and the chart sets none on purpose. CFS throttling makes a mount,
+  an unmount or a `CreateVolume` slow rather than failed, which on a node
+  plugin means a stuck application pod. The memory half of the policy
+  (`ratio: "1"`) passes. Exempt the driver's namespace from this policy too,
+  or run it without `cpuRatio`.
+
+kube-linter reports only the node settings above. The
+drivers' probes read their liveness-probe sidecar's port, which the sidecar
+declares, and the workloads carry `ignore-check.kube-linter.io/liveness-port`
+saying so (declaring the port twice makes the API server warn about a
+duplicate port on every install).
+
+Keep the exemption to the driver's namespace, and keep that namespace for the
+driver alone, so the exemption cannot be borrowed by another workload.
+
+**Gatekeeper** (the `gatekeeper-library` pod-security constraints): add the
+driver's namespace to `spec.match.excludedNamespaces` of the constraints the
+node pod trips -- `K8sPSPPrivilegedContainer`, `K8sPSPHostFilesystem`,
+`K8sPSPHostNetworkingPorts`, `K8sPSPAllowedUsers`,
+`K8sPSPAllowPrivilegeEscalationContainer` and `K8sPSPReadOnlyRootFilesystem`
+-- and leave every other constraint applying to it:
+
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sPSPPrivilegedContainer
+metadata:
+  name: psp-privileged-container
+spec:
+  match:
+    kinds: [{apiGroups: [""], kinds: ["Pod"]}]
+    excludedNamespaces: ["qumulo-csi"]
+```
+
+**Kyverno**: a `PolicyException` for the node pods only (Kyverno must have
+policy exceptions enabled; the API is `kyverno.io/v2` from Kyverno 1.13,
+`kyverno.io/v2beta1` before):
+
+```yaml
+apiVersion: kyverno.io/v2
+kind: PolicyException
+metadata:
+  name: qumulo-csi-node
+  namespace: qumulo-csi
+spec:
+  exceptions:
+    - policyName: disallow-privileged-containers
+      ruleNames: ["*"]
+    - policyName: disallow-host-path
+      ruleNames: ["*"]
+    - policyName: disallow-host-namespaces
+      ruleNames: ["*"]
+    - policyName: disallow-host-ports
+      ruleNames: ["*"]
+    - policyName: require-run-as-nonroot
+      ruleNames: ["*"]
+  match:
+    any:
+      - resources:
+          kinds: [Pod, DaemonSet]
+          namespaces: [qumulo-csi]
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: qumulo-csi-driver
+              app.kubernetes.io/component: node
+```
+
+Use the names of the policies your cluster actually runs: these are the ones
+the Kyverno pod-security policy set uses. On OpenShift the chart's own SCC
+already admits the node pod (above); a policy engine is a second, separate
+admission check and needs its own exemption.

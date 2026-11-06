@@ -178,6 +178,18 @@ relationship status as their first move. Requires
     serves these RPCs. The other replicas export **no** replication series, so
     scrape that one — or all of them.
 
+!!! warning "The age is extrapolated between reads"
+    `csi_qumulo_replication_recovery_point_age_seconds` is recomputed on every
+    scrape from the recovery point of the **last** replication-status read, so
+    between reads it advances on the controller's clock without consulting the
+    array. It is therefore accurate only to the csi-addons poll interval, and
+    it reads **too old**, never too fresh. The drop you see when a read lands
+    is the driver catching up, not a sync arriving — do not read sync times
+    off this series. Nothing exports the age of the observation itself, so a
+    relationship that stopped being polled looks like one that is lagging.
+    Set the stale threshold above your poll interval as well as your
+    replication interval.
+
 !!! warning "Mode present, age absent"
     The age appears only once the driver has read a recovery point. A
     relationship exporting `csi_qumulo_replication_mode` with no

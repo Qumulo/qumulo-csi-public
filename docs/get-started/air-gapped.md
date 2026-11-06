@@ -9,8 +9,8 @@ build.
 
 !!! note "On a disconnected OpenShift cluster"
     Mirror as described here, then redirect the cluster's pulls with an
-    `ImageDigestMirrorSet` — see
-    [Disconnected clusters and mirrored registries](openshift.md#disconnected-clusters-and-mirrored-registries).
+    `ImageDigestMirrorSet`. See [Install on OpenShift](openshift.md) for the
+    rest of the OpenShift install.
 
 ## 1. Mirror the images
 
