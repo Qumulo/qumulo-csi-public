@@ -1,0 +1,49 @@
+/* Qumulo brand colors */
+:root {
+  /* Primary: Qumulo Deep Cerulean */
+  --md-primary-fg-color: #007CAC;
+  --md-primary-fg-color--light: #00A3CA;
+  --md-primary-fg-color--dark: #045CB4;
+
+  /* Accent: Qumulo Bright Cyan */
+  --md-accent-fg-color: #00A3CA;
+  --md-accent-fg-color--transparent: rgba(0, 163, 202, 0.1);
+}
+
+/* Dark mode adjustments */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #00A3CA;
+  --md-primary-fg-color--light: #33b8d6;
+  --md-primary-fg-color--dark: #007CAC;
+  --md-accent-fg-color: #00A3CA;
+}
+
+/* Homepage hero */
+.qumulo-hero {
+  margin: 2rem auto 3rem;
+  text-align: center;
+}
+
+.qumulo-hero .qumulo-hero-logo {
+  max-width: min(20rem, 70%);
+  margin-bottom: 1rem;
+}
+
+.qumulo-hero h1 {
+  margin-bottom: 0.5rem;
+}
+
+.qumulo-hero p {
+  max-width: 36rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.qumulo-hero .md-button {
+  margin: 0.25rem;
+}
+
+/* The wordmark is navy; render it white on the dark scheme */
+[data-md-color-scheme="slate"] .qumulo-hero-logo {
+  filter: brightness(0) invert(1);
+}
