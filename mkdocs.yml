@@ -1,0 +1,119 @@
+site_name: Qumulo CSI Driver
+site_description: >-
+  Provision Kubernetes persistent volumes on Qumulo storage over NFS.
+site_url: https://qumulo.github.io/qumulo-csi-driver/
+copyright: Copyright &copy; Qumulo, Inc.
+
+theme:
+  name: material
+  logo: images/qumulo-logo.png
+  favicon: images/favicon.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    # No navigation.sections: top-level entries render as collapsible groups,
+    # collapsed until opened, rather than as flat always-open headings.
+    - navigation.top
+    - navigation.instant
+    - navigation.indexes
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+    - content.tabs.link
+
+extra_css:
+  - stylesheets/qumulo.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+# The repository's engineering notes live under docs/engineering/ but are written
+# for GitHub, with links into charts/, pkg/ and test/. They are excluded from the
+# site rather than rewritten, so those links keep working where they are read.
+exclude_docs: |
+  /engineering/
+  /regression-results/
+
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Prerequisites: get-started/prerequisites.md
+      - Install the driver: get-started/install.md
+      - Verify the installation: get-started/verify.md
+      - Create your first volume: get-started/first-volume.md
+      - Uninstall the driver: operate/uninstall.md
+  - OpenShift:
+      - Install on OpenShift: get-started/openshift.md
+      - Operate on OpenShift: operate/openshift-operations.md
+  - Features:
+      - features/index.md
+      - Volumes: features/volumes.md
+      - Adopt an existing folder: features/existing-folder.md
+      - Volume Layout Architecture: features/layout.md
+      - Storage Connectivity and Access Control: features/access.md
+      - Snapshots and restore: features/snapshots.md
+      - Several Qumulo clusters: features/multi-cluster.md
+      - Disaster recovery: features/disaster-recovery.md
+      - Protocol and mount options: features/mount-options.md
+      - Security: features/security.md
+      - Observability: features/observability.md
+  - Configuration:
+      - Storage class:
+          - provision/storageclass/index.md
+          - A complete values file: provision/storageclass/values-file.md
+          - Shared subdirectory: provision/storageclass/shared-subdirectory.md
+          - Dedicated export: provision/storageclass/dedicated-export.md
+          - Dedicated export on a network tenant: provision/storageclass/network-tenant.md
+          - Scheduled snapshots: provision/storageclass/scheduled-snapshots.md
+          - Two Qumulo clusters: provision/storageclass/two-clusters.md
+  - Use cases:
+      - Shared storage for many pods: use-cases/shared-storage.md
+  - Reference:
+      - StorageClass parameters: reference/storageclass-parameters.md
+      - Chart values: reference/chart-values.md
+      - Supported features: reference/supported-features.md
+      - Troubleshoot Guide: operate/troubleshoot-mounts.md
+      - FAQ: reference/faq.md
