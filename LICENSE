@@ -1,0 +1,47 @@
+Qumulo CSI Driver License
+
+Copyright (c) 2026 Qumulo, Inc. All rights reserved.
+
+This license applies to the Qumulo CSI Driver, including the container
+images and Helm chart published under ghcr.io/qumulo/qumulo-csi-public and
+the contents of this repository (together, the "Software").
+
+1. Grant. Qumulo, Inc. ("Qumulo") grants you a non-exclusive,
+   non-transferable, royalty-free license to download, install, run, and
+   configure the Software solely to provide storage from Qumulo products to
+   Kubernetes or OpenShift clusters that you operate. You may copy the
+   Software into registries and mirrors you control (including private or
+   air-gapped registries) for that purpose.
+
+2. Restrictions. Except as allowed in Section 1 or by applicable law, you
+   may not:
+   (a) modify, reverse engineer, or create derivative works of the
+       Software;
+   (b) distribute, sell, sublicense, or otherwise make the Software
+       available to third parties; or
+   (c) remove or alter any copyright or license notices.
+
+3. Your agreement with Qumulo. If you have a separate written agreement
+   with Qumulo that covers the Software, that agreement governs where it
+   conflicts with this license.
+
+4. Third-party components. The Software includes open-source components
+   that are licensed under their own terms. Those terms apply to those
+   components, and nothing in this license limits your rights under them.
+
+5. Future licensing. Qumulo may later release the Software under an open
+   source license, such as the Apache License, Version 2.0. Any such
+   release applies only to the versions published under it.
+
+6. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. Limitation of liability. TO THE MAXIMUM EXTENT PERMITTED BY LAW,
+   QUMULO WILL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY
+   ARISING FROM OR CONNECTED TO THE SOFTWARE OR ITS USE.
+
+8. Termination. This license ends automatically if you breach it. When it
+   ends, you must stop using the Software and delete your copies.
+
+For licensing questions, contact Qumulo, Inc.
