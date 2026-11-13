@@ -132,8 +132,7 @@ deletes the test pods, so leave out `--logs` (Helm would find no log and exit
 Some clusters do not let workloads use `restricted-v2`, do not let a workload
 chart create SCCs, or use a policy engine such as Gatekeeper so that only a
 platform team may create RoleBindings, ClusterRoleBindings or Helm's release
-Secrets. The chart supports all of these. A full example is in
-`test/openshift/values/openshift-values-gatekeeper.yaml`:
+Secrets. The chart supports all of these:
 
 ```yaml
 openshift:
@@ -148,12 +147,14 @@ openshift:
     name: qumulo-csi-node
 rbac:
   createBindings: false      # your platform team applies every binding
+# Optional: your own node label, if you pin the driver to certain nodes.
+# The chart defines no labels of its own; both default to {}.
 node:
   nodeSelector:
-    hydra_storage: "true"    # quoted: a node selector value is a string
+    example-storage: "true"   # quoted: a node selector value is a string
 controller:
   nodeSelector:
-    hydra_storage: "true"
+    example-storage: "true"
 ```
 
 Before the install, the platform team:
@@ -170,7 +171,7 @@ The install stops before it changes anything, naming each binding that is
 missing or wrong.
 
 !!! warning "Use a values file or `--set-string` for node selectors"
-    `--set node.nodeSelector.hydra_storage=true` makes the value a boolean,
+    `--set node.nodeSelector.example-storage=true` makes the value a boolean,
     which the API server refuses. Quote it in a values file, as above, or use
     `--set-string`.
 
