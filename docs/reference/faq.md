@@ -86,10 +86,15 @@
     that address. The driver now refuses this up front where it can see it.
     See [Troubleshoot Guide](../operate/troubleshoot-mounts.md).
 
-??? question "A PVC is stuck at `already exists` forever."
-    Defect D-60: a create interrupted between making the directory and setting
-    its quota. The leftover directory has to be removed on the array, or given
-    a quota, by hand. See
+??? question "A PVC is stuck at `already exists`."
+    A directory already exists at the volume's path and **holds data**, so the
+    driver refuses to adopt it rather than put a quota on somebody else's
+    files. Give the claim a different volume name, move the data aside, or
+    [adopt the folder deliberately](../features/existing-folder.md).
+
+    An *interrupted* create is no longer this problem: a create cut between
+    making the directory and setting its quota is finished by the retry
+    (D-60), so a controller restart mid-provision needs no manual repair. See
     [Troubleshoot provisioning](../provision/troubleshoot.md#a-pvc-stuck-at-already-exists).
 
 ??? question "Can I change a StorageClass parameter?"
