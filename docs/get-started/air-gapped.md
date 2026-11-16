@@ -58,40 +58,91 @@ skopeo copy --all \
   docker://registry.example.com/qumulo-csi-driver-node:0.1.0-<commit>
 ```
 
-`--all` is what carries every platform. Repeat for the controller image, and
-for the chart with `helm pull` (step 4).
+`--all` is what carries every platform. Repeat for the controller image, for
+every sidecar image ([step 3](#3-mirror-the-sidecar-images)), and for the chart
+with `helm pull` ([step 2](#2-bring-the-chart-in)).
 
-## 2. Mirror the sidecar images
-
-The chart's defaults point at `registry.k8s.io`. An air-gapped cluster needs
-those mirrored too. List exactly what your values file resolves to rather than
-working from memory:
+## 2. Bring the chart in
 
 ```bash
-helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> --values qumulo-values.yaml \
+# outside: pull the published chart as a file
+cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin   # <-- EDIT
+helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.0+<commit> # <-- EDIT
+```
+
+Carry `qumulo-csi-driver-0.1.0+<commit>.tgz` inside with the images. Quote the
+`--version` explicitly: without it Helm resolves whichever build the registry
+happens to serve, which need not be the one you mirrored.
+
+Pull the released chart rather than packaging the `charts/` folder: a chart
+packaged from a checkout is always version `0.1.0` and asks for the moving
+`0.1.0` image tag, so it need not match the images you just mirrored.
+
+## 3. Mirror the sidecar images
+
+Most of the chart's sidecar defaults point at `registry.k8s.io`, but not all of
+them: the csi-addons sidecar comes from `quay.io`. An air-gapped cluster needs
+every one of them mirrored. List exactly what your values file resolves to
+rather than working from memory.
+
+Do this with the chart you have already brought inside ([step 2](#2-bring-the-chart-in)),
+so the listing itself needs no network:
+
+```bash
+helm template qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \
+  --values qumulo-values.yaml \
   | grep -E '^\s+image:' | sort -u
 ```
 
-Then override each one:
+Mirror each image the listing names, with the same `imagetools create` or
+`skopeo copy --all` commands used for the driver images in
+[step 1](#1-mirror-the-images). These are the chart's defaults for this
+release:
+
+| Sidecar | Default image |
+| --- | --- |
+| `provisioner` | `registry.k8s.io/sig-storage/csi-provisioner:v5.3.0` |
+| `resizer` | `registry.k8s.io/sig-storage/csi-resizer:v1.14.0` |
+| `nodeDriverRegistrar` | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0` |
+| `livenessProbe` | `registry.k8s.io/sig-storage/livenessprobe:v2.16.0` |
+| `snapshotter` | `registry.k8s.io/sig-storage/csi-snapshotter:v8.2.0` |
+| `healthMonitor` | `registry.k8s.io/sig-storage/csi-external-health-monitor-controller:v0.19.0` |
+| `csiAddons` | `quay.io/csiaddons/k8s-sidecar:v0.15.0` |
+
+Then override each one. Each `image` is a **single, complete reference
+string**, not an object:
 
 ```yaml
 sidecars:
   provisioner:
-    image:
-      repository: registry.example.com/sig-storage/csi-provisioner
+    image: registry.example.com/sig-storage/csi-provisioner:v5.3.0
   resizer:
-    image:
-      repository: registry.example.com/sig-storage/csi-resizer
+    image: registry.example.com/sig-storage/csi-resizer:v1.14.0
   nodeDriverRegistrar:
-    image:
-      repository: registry.example.com/sig-storage/csi-node-driver-registrar
+    image: registry.example.com/sig-storage/csi-node-driver-registrar:v2.14.0
   livenessProbe:
-    image:
-      repository: registry.example.com/sig-storage/livenessprobe
+    image: registry.example.com/sig-storage/livenessprobe:v2.16.0
+  snapshotter:
+    image: registry.example.com/sig-storage/csi-snapshotter:v8.2.0
+  healthMonitor:
+    image: registry.example.com/sig-storage/csi-external-health-monitor-controller:v0.19.0
+  csiAddons:
+    image: registry.example.com/csiaddons/k8s-sidecar:v0.15.0
 ```
 
-## 3. Point the chart at your registry
+!!! warning "Keep the tag on a sidecar image"
+    A sidecar's `image` is used exactly as written. Unlike the driver images,
+    nothing fills in a tag from the chart's version, so
+    `registry.example.com/sig-storage/csi-provisioner` with no tag resolves to
+    `:latest` — a tag your mirror almost certainly does not have, and the
+    sidecar then fails to pull.
+
+!!! tip "Override only the sidecars you run"
+    `snapshotter`, `healthMonitor` and `csiAddons` run only when their features
+    are enabled. Mirroring them anyway costs little and means enabling a
+    feature later does not strand you without an image.
+
+## 4. Point the chart at your registry
 
 ```yaml
 image:
@@ -114,22 +165,6 @@ image:
         tag: "0.1.0-<commit>@sha256:<digest>"
     ```
 
-## 4. Bring the chart in
-
-```bash
-# outside: pull the published chart as a file
-cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin   # <-- EDIT
-helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.0+<commit> # <-- EDIT
-
-# inside
-helm install qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \
-  --namespace qumulo-csi --values qumulo-values.yaml
-```
-
-Pull the released chart rather than packaging the `charts/` folder: a chart
-packaged from a checkout is always version `0.1.0` and asks for the moving
-`0.1.0` image tag, so it need not match the images you just mirrored.
-
 ## 5. Private CA
 
 An air-gapped estate usually has its own CA for the Qumulo cluster's
@@ -148,6 +183,13 @@ qumulo:
 
 The chart mounts the ConfigMap on the controller and sets `SSL_CERT_FILE`.
 The node plugin never calls the REST API, so it gets no CA mount.
+
+## 6. Install
+
+```bash
+helm install qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \
+  --namespace qumulo-csi --values qumulo-values.yaml
+```
 
 ## What still needs no network
 

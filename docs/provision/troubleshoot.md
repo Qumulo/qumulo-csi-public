@@ -241,27 +241,43 @@ stops there and the retry adopts whatever it left.
 
 ## A PVC stuck at `already exists`
 
-**Problem.** Defect **D-60**. A `CreateVolume` interrupted between creating
-the directory and setting its quota.
+**Problem.** A directory already exists at the volume's path and this driver
+will not adopt it.
 
-**Symptoms.** The PVC stays `Pending` **indefinitely**, failing `already
-exists` on every retry — not just the one after the interruption.
+!!! note "An interrupted create is no longer this problem (D-60)"
+    A `CreateVolume` cut between making the directory and setting its quota
+    **is** resumed. The retry recognises the empty, quota-less directory as
+    its own interrupted attempt and finishes it — same directory, quota and
+    export — wherever the create was cut. If you are looking this up because
+    a controller restarted mid-provision, no manual repair is needed: let the
+    provisioner retry.
 
-**Root cause.** The retry finds the directory there with no quota, refuses to
-adopt it as not driver-provisioned, and fails. No quota means this driver did
-not provision it, and adopting an arbitrary directory would be worse.
+**Symptoms.** The PVC stays `Pending`, failing `already exists` on every
+retry.
 
-**Resolution.** On the array, either remove the leftover directory (named
-`pvc-<uid>`, matching the PVC's UID) or give it a quota. Then delete and
-recreate the PVC.
+**Root cause.** There is a directory at the volume's path that **holds
+data**. The driver tells its own interrupted create (empty, no quota) from a
+directory with contents, and refuses the second kind: putting a quota on
+somebody else's files, and later deleting them with the PV, would be worse
+than failing. This is a name collision, not a provisioning defect.
+
+**Resolution.** Decide whose directory it is.
 
 ```bash
 kubectl get pvc <claim-name> -o jsonpath='{.metadata.uid}{"\n"}'
-# look for pvc-<uid> under basePath on the cluster
+# look for pvc-<uid> under basePath on the cluster, and list its contents
 ```
 
-**Prevention.** None available in 0.1.0; this is the known gap in otherwise
-idempotent creation.
+- **It holds data you want:** give the claim a different volume name, or move
+  the data aside, then recreate the PVC. To hand the existing data to
+  Kubernetes deliberately, use
+  [Adopt an existing folder](../features/existing-folder.md) rather than
+  letting a dynamic create take it.
+- **It is leftover junk you are sure of:** remove it on the array and let the
+  provisioner retry.
+
+**Prevention.** Keep `basePath` for this driver's own volumes, so a dynamic
+create never lands on a path that already has contents.
 
 ---
 

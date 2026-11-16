@@ -233,8 +233,10 @@ sequenceDiagram
 
 !!! note "Retries adopt, they do not duplicate"
     A `CreateVolume` cut short by a timeout or a restart is resumed by the
-    retry, which adopts the earlier attempt's state. The one gap is a create
-    interrupted *between* making the directory and setting its quota — see
+    retry, which adopts the earlier attempt's state — including a create
+    interrupted *between* making the directory and setting its quota (D-60).
+    The retry tells its own attempt, an empty directory with no quota, from
+    one that holds data, and adopts only the first; see
     [D-60 in the feature list](../reference/supported-features.md#1-volume-lifecycle).
 
 ## Mount flow

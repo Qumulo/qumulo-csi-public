@@ -138,12 +138,17 @@ A `CreateVolume` cut short by a timeout or a controller restart is resumed by
 the provisioner's retry, which adopts the earlier attempt rather than
 duplicating it.
 
-!!! warning "One gap: a create cut between the directory and its quota"
-    The retry finds the directory there with no quota, refuses to adopt it as
-    not driver-provisioned, and fails `already exists` — on that attempt and
-    every later one, so the PVC stays `Pending` indefinitely (D-60). The
-    directory has to be removed on the array, or given a quota, by hand. See
-    [Troubleshoot provisioning](troubleshoot.md).
+That includes a create cut between making the directory and setting its quota
+(D-60): the retry recognises the empty, quota-less directory as its own
+interrupted attempt and finishes it — same directory, quota and export.
+
+!!! note "The one directory a retry will not adopt"
+    A quota-less directory that already **holds data** is refused with
+    `already exists`, and its contents are left untouched: that is a name
+    collision with somebody else's files, not an interrupted create. Give the
+    claim a different volume name, or
+    [adopt the folder deliberately](../features/existing-folder.md). See
+    [Troubleshoot provisioning](troubleshoot.md#a-pvc-stuck-at-already-exists).
 
 ## StatefulSets
 
