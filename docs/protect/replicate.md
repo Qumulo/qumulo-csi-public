@@ -91,7 +91,7 @@ point.
     A Disable leaves the DR covering export read-write, and the next Enable
     finds a read-write export it did not make and refuses rather than
     re-protecting over it — so the volume stays unprotected until the export
-    is set read-only by hand (D-78). Only an Enable that re-protects a copy
+    is set read-only by hand. Only an Enable that re-protects a copy
     unchanged since the Disable is allowed through.
 
 ### Protecting a `shared-subdirectory` class

@@ -68,7 +68,7 @@ can never grow past its copy. An unreachable peer leaves both unchanged.
     unplanned failover leaves until the old side is demoted — is refused,
     naming the promoted array, with both quotas as they were. Raising the
     stale copy alone and reporting success left the claim reading a size the
-    live copy never had (D-05).
+    live copy never had.
 
 !!! note "Replication ignores the target quota, but clients do not"
     A replica left behind fails the first write after a promote with `ENOSPC`.

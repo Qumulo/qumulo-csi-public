@@ -94,7 +94,7 @@ kubelet already publishes are not duplicated.
 `volume_id` is the first 16 hex digits of the SHA-256 of the volume's CSI
 handle **in its canonical form**, `<server>#<apiUrl>#<realPath>` with the path
 cleaned. It used to be the handle itself, which told anyone who could read
-`/metrics` every volume's array, endpoint and path (D-88); the digest names
+`/metrics` every volume's array, endpoint and path; the digest names
 none of them, and still keeps a DR copy apart from its source.
 
 The canonical form matters for a volume an older build provisioned: its PV
@@ -296,7 +296,7 @@ Thresholds: `metrics.prometheusRule.recoveryPointAgeSeconds` (900),
     growing age means it stalled. A policy-mode one advances only when a
     scheduled snapshot replicates, so on a healthy pair the age climbs to the
     schedule interval every cycle — with one 900 s threshold an hourly policy
-    pair met the condition for about 35 minutes of every hour (D-25). Where
+    pair met the condition for about 35 minutes of every hour. Where
     `csi_qumulo_replication_policy_interval_seconds` exists, the alert uses
     `policyIntervalFactor × interval` instead, never below
     `recoveryPointAgeSeconds`. A DR-side controller sees no `mode` series —
