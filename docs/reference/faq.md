@@ -93,8 +93,8 @@
     [adopt the folder deliberately](../features/existing-folder.md).
 
     An *interrupted* create is no longer this problem: a create cut between
-    making the directory and setting its quota is finished by the retry
-    (D-60), so a controller restart mid-provision needs no manual repair. See
+    making the directory and setting its quota is finished by the retry,
+    so a controller restart mid-provision needs no manual repair. See
     [Troubleshoot provisioning](../provision/troubleshoot.md#a-pvc-stuck-at-already-exists).
 
 ??? question "Can I change a StorageClass parameter?"

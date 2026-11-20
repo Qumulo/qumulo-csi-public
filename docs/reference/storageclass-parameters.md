@@ -168,7 +168,7 @@ restorable. Capacity is looked up on `basePath/<domain>`.
 
 !!! warning "A dedicated export with no restriction is refused"
     Such an export admits any NFS client that can reach the array, as root,
-    with no authentication (D-62) — including hosts outside the cluster and
+    with no authentication — including hosts outside the cluster and
     any pod running a userspace NFS client. `requireAllowedClients` is on by
     default, so the class must set `allowedClients`, `allowAnyClient: true`,
     or a Kerberos `securityFlavor`. The driver enforces the same rule at
@@ -274,7 +274,7 @@ so a year is `12months`.
 ### `allowForeignSnapshotRestore`
 
 Lets the class restore a snapshot that is not named as this driver's are and
-whose source directory is gone. Refused otherwise (D-86).
+whose source directory is gone. Refused otherwise.
 
 ## Native StorageClass fields
 

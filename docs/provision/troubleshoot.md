@@ -244,7 +244,7 @@ stops there and the retry adopts whatever it left.
 **Problem.** A directory already exists at the volume's path and this driver
 will not adopt it.
 
-!!! note "An interrupted create is no longer this problem (D-60)"
+!!! note "An interrupted create is no longer this problem"
     A `CreateVolume` cut between making the directory and setting its quota
     **is** resumed. The retry recognises the empty, quota-less directory as
     its own interrupted attempt and finishes it — same directory, quota and
@@ -299,7 +299,7 @@ create never lands on a path that already has contents.
 !!! note "A volume counts as deleted only when the cluster reports it absent"
     A PV is never dropped while its directory still exists — except for a
     handle this driver cannot parse at all, which is answered OK because
-    refusing would strand the PV forever (D-58). That handle's directory is
+    refusing would strand the PV forever. That handle's directory is
     left on the array.
 
 ---

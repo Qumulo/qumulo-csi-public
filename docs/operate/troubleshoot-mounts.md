@@ -134,7 +134,7 @@ them left the mounts behind on the node.
     It aborts in-flight requests on the **whole NFS superblock**, and mounts
     from the same array address with the same options share one. So a pod
     deleted during an outage is released with `umount -l` instead, and the
-    other pods' writes on that array carry on (D-57).
+    other pods' writes on that array carry on.
 
 **Resolution.** Usually none needed — wait for the ladder. If terminations
 legitimately take longer than 30 s on your network:

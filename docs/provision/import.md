@@ -109,7 +109,7 @@ PV while the directory stayed on the array.
 
 A handle this driver cannot parse at all is answered OK by `DeleteVolume`
 without touching the array, because there is nothing it could safely act on and
-refusing would strand the PV forever (D-58). Such a handle's directory is left
+refusing would strand the PV forever. Such a handle's directory is left
 on the array.
 
 ## Not scoped to a managed root

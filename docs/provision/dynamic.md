@@ -138,8 +138,8 @@ A `CreateVolume` cut short by a timeout or a controller restart is resumed by
 the provisioner's retry, which adopts the earlier attempt rather than
 duplicating it.
 
-That includes a create cut between making the directory and setting its quota
-(D-60): the retry recognises the empty, quota-less directory as its own
+That includes a create cut between making the directory and setting its quota:
+the retry recognises the empty, quota-less directory as its own
 interrupted attempt and finishes it — same directory, quota and export.
 
 !!! note "The one directory a retry will not adopt"

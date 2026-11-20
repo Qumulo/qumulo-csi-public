@@ -122,7 +122,7 @@ so a year is `12months`.
 - A VolumeSnapshotClass `apiurl` override must reach the volume's **own**
   cluster; the driver compares cluster UUIDs and refuses a different cluster.
   When either endpoint cannot be read, the check is skipped and the snapshot
-  taken with a warning (D-14).
+  taken with a warning.
 
 ## Next
 

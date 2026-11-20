@@ -214,8 +214,7 @@ pod runs as a non-root user, so its class must let one write
     but `CreateVolume` dials the **StorageClass's** endpoint, so a restore
     needs a class whose `apiUrl` is that same override. The driver compares
     cluster UUIDs and refuses a different cluster; when either endpoint cannot
-    be read, the check is skipped and the snapshot taken with a warning
-    (D-14).
+    be read, the check is skipped and the snapshot taken with a warning.
 
 ### `volumeReplicationClasses[]`
 
