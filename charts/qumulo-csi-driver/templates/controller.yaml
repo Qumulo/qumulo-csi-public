@@ -1,0 +1,640 @@
+{{- $fullname := include "qumulo-csi-driver.fullname" . -}}
+{{- $hostNetwork := include "qumulo-csi-driver.controllerHostNetwork" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+  # kube-linter reads a probe's port against the probed container's own ports.
+  # The driver's probes read /healthz on 29652, which the liveness-probe
+  # sidecar in the same pod serves and declares; declaring it on the driver
+  # too makes the API server warn about a duplicate port on every install.
+  annotations:
+    ignore-check.kube-linter.io/liveness-port: "the driver probes the /healthz of the liveness-probe sidecar on 29652, declared on that sidecar in the same pod"
+    ignore-check.kube-linter.io/readiness-port: "the driver probes the /healthz of the liveness-probe sidecar on 29652, declared on that sidecar in the same pod"
+spec:
+  replicas: {{ .Values.controller.replicaCount }}
+  {{- with .Values.controller.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- else }}
+  {{- if not .Values.controller.leaderElection }}
+  # Without leader election two controllers must never run at once, and the
+  # default RollingUpdate surge starts the new pod before the old one stops,
+  # so for every rollout two provisioners and resizers acted on the same
+  # claims.
+  strategy:
+    type: Recreate
+  {{- else if $hostNetwork }}
+  # Host network: a surge pod needs a node no replica holds the ports on,
+  # and with the replicas kept apart (below) on as many nodes as there are
+  # replicas, it would wait for one forever. Replace one replica at a time;
+  # the other keeps the leases.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  {{- end }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qumulo-csi-driver.labels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+        {{- if $hostNetwork }}
+        # Scopes the required anti-affinity below to host-network replicas.
+        # Not in the selector (immutable), only on the pods.
+        csi.qumulo.com/controller-host-network: "true"
+        {{- end }}
+      {{- $ocp := include "qumulo-csi-driver.isOpenShift" . }}
+      {{- if or .Values.controller.podAnnotations $ocp }}
+      annotations:
+        {{- if $ocp }}
+        # Pinned, so admission never picks another SCC a cluster admin granted.
+        openshift.io/required-scc: {{ include "qumulo-csi-driver.controllerSCC" . | quote }}
+        {{- end }}
+        {{- with .Values.controller.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $fullname }}-controller
+      {{- if $hostNetwork }}
+      # controller.hostNetwork: the array's REST API is reachable only from the
+      # nodes' own routes. Every containerPort below is a port on the node.
+      hostNetwork: true
+      {{- end }}
+      {{- with .Values.controller.dnsPolicy | default (ternary "ClusterFirstWithHostNet" "" (eq $hostNetwork "true")) }}
+      # On the host network, ClusterFirstWithHostNet keeps cluster DNS, so the
+      # sidecars still resolve the Kubernetes API.
+      dnsPolicy: {{ . }}
+      {{- end }}
+      # Explicit rather than inherited. The driver waits up to
+      # shutdownGracePeriod (10s) for in-flight handlers and then stops
+      # outright, so this only has to be comfortably larger. The wait does not
+      # let an RPC finish -- the sidecars exit on the same signal and its
+      # context is cancelled at once -- so it covers rollbacks, which run on a
+      # context of their own.
+      terminationGracePeriodSeconds: {{ .Values.controller.terminationGracePeriodSeconds }}
+      {{- with .Values.controller.priorityClassName }}
+      # The controller serves every storage operation in the cluster; evicted
+      # first under node pressure as BestEffort, it stopped them all.
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.controller.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: csi-provisioner
+          image: {{ .Values.sidecars.provisioner.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout={{ .Values.sidecars.provisioner.timeout }}
+            {{- if .Values.controller.leaderElection }}
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            {{- include "qumulo-csi-driver.leaderElectionTimings" $ | nindent 12 }}
+            {{- end }}
+            {{- if .Values.sidecars.provisioner.extraCreateMetadata }}
+            - --extra-create-metadata
+            {{- end }}
+            {{- if .Values.sidecars.capacity.enabled }}
+            # Publishes one CSIStorageCapacity object per StorageClass, from
+            # this driver's GetCapacity. The ownerref level is 2 because the
+            # objects are owned by the Deployment that owns this pod's
+            # ReplicaSet -- pod -> ReplicaSet -> Deployment -- so they are
+            # garbage-collected when the release is removed.
+            - --enable-capacity
+            - --capacity-ownerref-level=2
+            # Required, not optional, for this chart. The sidecar skips any
+            # StorageClass with volumeBindingMode: Immediate unless this is
+            # set, and every class this chart renders is Immediate -- an NFS
+            # export is reachable identically from every node, so there is no
+            # topology for the scheduler to resolve. Without this flag the
+            # Capacity Controller starts, logs that it started, and then
+            # publishes nothing at all: the feature is inert and silent.
+            #
+            # The flag's own help text is the honest description of what this
+            # feature is here: "Not needed for the Kubernetes scheduler, maybe
+            # useful for other consumers or for debugging."
+            - --capacity-for-immediate-binding
+            {{- end }}
+            # Always on: it serves the /healthz/leader-election the probes below
+            # read, and the sidecar's own metrics (csi_sidecar_operations_seconds,
+            # how long *this container* waited on an RPC, retries included),
+            # which only metrics.enabled publishes through a Service. pprof
+            # stays off (no --enable-pprof).
+            #
+            # --http-endpoint and not --metrics-address: they are the same
+            # flag, the latter is the deprecated spelling, and csi-lib-utils
+            # refuses to start when both are given.
+            - --http-endpoint=:{{ .Values.metrics.port.provisioner }}
+            - --v=2
+            {{- with .Values.sidecars.provisioner.extraArgs }}
+            # Verbatim, after the chart's own.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Named after the sidecar, as on the metrics Service: the driver's
+          # port is "metrics", and a pod with two ports of one name warns on
+          # every install and upgrade.
+          ports:
+            - name: provisioner
+              containerPort: {{ .Values.metrics.port.provisioner }}
+          {{- include "qumulo-csi-driver.sidecarProbes" (dict "root" $ "port" "provisioner") | nindent 10 }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.sidecars.capacity.enabled }}
+            # Required by --capacity-ownerref-level: the sidecar walks up from
+            # this pod to find the object that should own the capacity objects.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "provisioner") | nindent 12 }}
+
+        - name: csi-resizer
+          image: {{ .Values.sidecars.resizer.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout={{ .Values.sidecars.resizer.timeout }}
+            {{- if .Values.controller.leaderElection }}
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            {{- include "qumulo-csi-driver.leaderElectionTimings" $ | nindent 12 }}
+            {{- end }}
+            # Expansion is a quota change on the cluster, so there is no
+            # node-side step and a volume in use does not block it.
+            - --handle-volume-inuse-error=false
+            # Always on, for the probes below; see the provisioner.
+            - --http-endpoint=:{{ .Values.metrics.port.resizer }}
+            - --v=2
+            {{- with .Values.sidecars.resizer.extraArgs }}
+            # Verbatim, after the chart's own.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: resizer
+              containerPort: {{ .Values.metrics.port.resizer }}
+          {{- include "qumulo-csi-driver.sidecarProbes" (dict "root" $ "port" "resizer") | nindent 10 }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "resizer") | nindent 12 }}
+
+        {{- if .Values.sidecars.snapshotter.enabled }}
+        # Watches VolumeSnapshot objects and calls CreateSnapshot/DeleteSnapshot
+        # on this driver. Off unless enabled, because it cannot start without
+        # the cluster-wide snapshot CRDs -- and a container that will not start
+        # takes the whole controller pod, provisioning included, with it.
+        - name: csi-snapshotter
+          image: {{ .Values.sidecars.snapshotter.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout={{ .Values.sidecars.snapshotter.timeout }}
+            {{- if .Values.controller.leaderElection }}
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            {{- include "qumulo-csi-driver.leaderElectionTimings" $ | nindent 12 }}
+            {{- end }}
+            # Adds the VolumeSnapshot's name and namespace to CreateSnapshot, so
+            # a failure is traceable to a specific object. The driver allowlists
+            # the csi.storage.k8s.io/ prefix, so these do not trip its strict
+            # unknown-parameter rejection.
+            - --extra-create-metadata
+            # The driver is given the same prefix: it is how DeleteSnapshot
+            # tells the snapshots this sidecar asked for from anyone else's.
+            - --snapshot-name-prefix={{ .Values.sidecars.snapshotter.snapshotNamePrefix }}
+            # Always on, for the probes below; see the provisioner.
+            - --http-endpoint=:{{ .Values.metrics.port.snapshotter }}
+            - --v=2
+            {{- with .Values.sidecars.snapshotter.extraArgs }}
+            # Verbatim, after the chart's own.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: snapshotter
+              containerPort: {{ .Values.metrics.port.snapshotter }}
+          {{- include "qumulo-csi-driver.sidecarProbes" (dict "root" $ "port" "snapshotter") | nindent 10 }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "sidecar") | nindent 12 }}
+
+        {{- end }}
+        {{- if .Values.sidecars.healthMonitor.enabled }}
+        # Polls each bound volume with ControllerGetVolumeHealth and records
+        # the answer on its claim. Kubernetes 1.37 with the
+        # CSIVolumeHealth gate; needs controller.inventory.enabled.
+        - name: csi-external-health-monitor-controller
+          image: {{ .Values.sidecars.healthMonitor.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout={{ .Values.sidecars.healthMonitor.timeout }}
+            - --monitor-interval={{ .Values.sidecars.healthMonitor.monitorInterval }}
+            {{- if .Values.controller.leaderElection }}
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            {{- include "qumulo-csi-driver.leaderElectionTimings" $ | nindent 12 }}
+            {{- end }}
+            - --http-endpoint=
+            - --v=2
+            {{- with .Values.sidecars.healthMonitor.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "sidecar") | nindent 12 }}
+
+        {{- end }}
+        {{- if .Values.sidecars.csiAddons.enabled }}
+        # Opt-in. Registers a CSIAddonsNode for this pod and turns
+        # VolumeReplication objects into replication RPCs on the driver's
+        # socket -- the same socket the CSI sidecars use, because the driver
+        # serves the csi-addons services alongside the CSI ones. Off unless
+        # enabled: it cannot start without the csi-addons CRDs, and a
+        # container that will not start takes the controller pod with it.
+        - name: csi-addons
+          image: {{ .Values.sidecars.csiAddons.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --node-id=$(NODE_ID)
+            - --csi-addons-address=$(CSIADDONS_ENDPOINT)
+            - --controller-port={{ .Values.sidecars.csiAddons.controllerPort }}
+            - --pod=$(POD_NAME)
+            - --namespace=$(POD_NAMESPACE)
+            - --pod-uid=$(POD_UID)
+            - --v=2
+            {{- with .Values.sidecars.csiAddons.extraArgs }}
+            # Verbatim, after the chart's own.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: csi-addons
+              containerPort: {{ .Values.sidecars.csiAddons.controllerPort }}
+          # Its gRPC port accepting connections: the sidecar has no health
+          # endpoint of its own.
+          livenessProbe:
+            tcpSocket:
+              port: csi-addons
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: csi-addons
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          env:
+            - name: CSIADDONS_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "sidecar") | nindent 12 }}
+
+        {{- end }}
+        - name: liveness-probe
+          image: {{ .Values.sidecars.livenessProbe.image }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --http-endpoint=:29652
+          ports:
+            - name: healthz
+              containerPort: 29652
+          # This container's own health: its listener accepts connections. Not
+          # /healthz, which reports the driver's health -- failing on it would
+          # restart this sidecar for the driver's fault. The driver container
+          # below is the one that probes /healthz.
+          livenessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "sidecar") | nindent 12 }}
+
+        - name: qumulo-csi-driver
+          image: {{ include "qumulo-csi-driver.controllerImage" . }}
+          {{- with include "qumulo-csi-driver.controllerSecurityContext" $ }}
+          securityContext:
+            {{- . | nindent 12 }}
+          {{- end }}
+          imagePullPolicy: {{ include "qumulo-csi-driver.pullPolicy" (list .Values.image.controller $) }}
+          # controller.resources is this container's, as the schema always said;
+          # it used to reach only the sidecars, leaving the driver -- the one
+          # container whose memory grows with listings and restores -- with no
+          # request at all.
+          resources:
+            {{- include "qumulo-csi-driver.controllerResources" (dict "root" $ "container" "driver") | nindent 12 }}
+          # The image defaults to -mode=controller, but the mode is spelled out
+          # here so reading the manifest tells you which role this pod plays.
+          args:
+            - -mode=controller
+            - -endpoint=unix:///csi/csi.sock
+            - -drivername={{ .Values.driverName }}
+            - -qumulo-api-timeout={{ .Values.qumulo.apiTimeout }}
+            {{- if .Values.qumulo.insecureSkipTlsVerify }}
+            - -insecure-skip-tls-verify
+            {{- end }}
+            - -log-level={{ .Values.controller.logLevel }}
+            # csi-snapshotter's --snapshot-name-prefix: a snapshot named
+            # otherwise is not this driver's to delete without consent.
+            - -snapshot-name-prefix={{ .Values.sidecars.snapshotter.snapshotNamePrefix }}
+            # The driver's half of requireAllowedClients: CreateVolume refuses
+            # an open dedicated-export class made outside this chart.
+            - -require-allowed-clients={{ .Values.requireAllowedClients }}
+            {{- if .Values.sidecars.capacity.enabled }}
+            # Lets GetCapacity read each StorageClass's provisioner Secret from
+            # the Kubernetes API. Paired with --enable-capacity on the
+            # provisioner above: without that nothing calls the RPC, and
+            # without this the RPC has no credential to answer with.
+            - -enable-capacity
+            {{- end }}
+            {{- if .Values.controller.inventory.enabled }}
+            # Lets ListVolumes and ControllerGetVolume discover the clusters
+            # this release provisions into. Unlike capacity there is no paired
+            # sidecar flag: the caller is the external-health-monitor sidecar
+            # or a tool calling the RPC directly, neither of which this chart
+            # deploys.
+            - -enable-inventory
+            {{- end }}
+            {{- if .Values.sidecars.csiAddons.enabled }}
+            # Opt-in. Serves the csi-addons replication and identity
+            # services on the socket, paired with the csi-addons sidecar
+            # above: without it the sidecar finds no replication capability
+            # and does nothing; without the sidecar nothing calls the RPCs.
+            - -enable-replication
+            # The expiry the driver gives the snapshot an array takes before
+            # each replication revert.
+            - -revert-snapshot-retention={{ .Values.sidecars.csiAddons.revertSnapshotRetention | default "168h" }}
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            # Serves /metrics and a process-liveness /healthz.
+            # Unrelated to the livenessProbe below, which reaches the
+            # livenessprobe sidecar's /healthz on :29652 and is what restarts
+            # this container -- nothing restarts on anything served here.
+            - -metrics-address=:{{ .Values.metrics.port.controller }}
+            {{- end }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port.controller }}
+          {{- end }}
+        {{- $ca := include "qumulo-csi-driver.caConfigMap" . }}
+        {{- $proxy := .Values.controller.proxy | default dict }}
+        {{- if or $ca $proxy.httpsProxy $proxy.httpProxy }}
+          env:
+            {{- if $ca }}
+            # Go's crypto/x509 reads SSL_CERT_FILE in place of the image's own
+            # CA bundle, so pointing it at a mounted CA is all it takes to
+            # trust a private or self-signed cluster certificate -- the driver
+            # needs no CA flag of its own.
+            - name: SSL_CERT_FILE
+              value: /etc/qumulo-ca/{{ base $ca }}
+            {{- end }}
+            {{- if or $proxy.httpsProxy $proxy.httpProxy }}
+            # Go's net/http reads these through the transport the driver
+            # clones from http.DefaultTransport. NO_PROXY keeps the
+            # driver's own Kubernetes API calls direct: the in-cluster client
+            # dials $(KUBERNETES_SERVICE_HOST), which the kubelet sets.
+            {{- with $proxy.httpsProxy }}
+            - name: HTTPS_PROXY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $proxy.httpProxy }}
+            - name: HTTP_PROXY
+              value: {{ . | quote }}
+            {{- end }}
+            - name: NO_PROXY
+              value: {{ join "," (compact (list $proxy.noProxy ".svc" ".cluster.local" "$(KUBERNETES_SERVICE_HOST)")) | quote }}
+            {{- end }}
+          {{- end }}
+          # Liveness comes from the liveness-probe sidecar, which calls the CSI
+          # Identity.Probe RPC over the shared socket and serves the result on
+          # :29652. That RPC deliberately never contacts the Qumulo cluster
+          # (see IdentityServer.Probe: a probe that did contact the cluster
+          # once reported "Ready" for 36 minutes with a dead token), so this
+          # restarts the container for a wedged driver, not for an
+          # unreachable cluster.
+          #
+          # The port is numeric rather than named because the name is declared
+          # on the sidecar, not here -- and a numeric port is all that is
+          # needed, since containers in a pod share a network namespace. An
+          # earlier note claimed the probe was impossible for that reason; it
+          # is not, and without it the sidecar served /healthz that nothing
+          # ever read.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 29652
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          # The same Identity.Probe, so a replica whose driver does not answer
+          # on its socket is not counted Ready -- by the rollout, and by the
+          # PodDisruptionBudget below. Like liveness, it never contacts a
+          # Qumulo cluster.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 29652
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            {{- if $ca }}
+            - name: qumulo-ca
+              mountPath: /etc/qumulo-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        {{- with $ca }}
+        # The key is listed, and so required: the pod waits in
+        # ContainerCreating until it exists -- for openshift.trustedCABundle,
+        # until OpenShift has filled it -- because Go reads SSL_CERT_FILE once
+        # and would otherwise keep an empty CA list.
+        - name: qumulo-ca
+          configMap:
+            name: {{ dir . }}
+            items:
+              - key: {{ base . }}
+                path: {{ base . }}
+        {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.controller.affinity }}
+      affinity:
+        {{- toYaml .Values.controller.affinity | nindent 8 }}
+      {{- else if $hostNetwork }}
+      # Hard on the host network: two replicas on one node would both bind the
+      # same node ports, and the second would crash-loop. Only between
+      # host-network replicas (the label above): a pod-network replica holds
+      # no node port, and matching it too deadlocked the rollout that turned
+      # hostNetwork off -- the old pods' required rule kept the new pod off
+      # every node they ran on (OCP 4.22, 2026-11-13).
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 18 }}
+                  csi.qumulo.com/controller-host-network: "true"
+      {{- else }}
+      # Soft: spread the replicas over nodes when the cluster has them, and
+      # still schedule on a single-node cluster. With both on one node, that
+      # node's drain or failure stopped every storage operation.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with .Values.controller.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if and .Values.controller.podDisruptionBudget.enabled (gt (int .Values.controller.replicaCount) 1) }}
+---
+# A drain evicts one controller at a time, so a standby is always left to
+# take the leases. Only with more than one replica: with one, a PDB
+# would block every drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  maxUnavailable: 1
+  # A replica that is Running but not Ready -- a crash-looping or wedged
+  # controller -- may always be evicted. With the default (IfHealthyBudget) a
+  # drain would wait on it whenever the other replica was also unready, and
+  # a node drain or cluster upgrade would hang on a pod that serves nothing.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 6 }}
+{{- end }}

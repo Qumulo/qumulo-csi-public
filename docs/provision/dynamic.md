@@ -138,17 +138,11 @@ A `CreateVolume` cut short by a timeout or a controller restart is resumed by
 the provisioner's retry, which adopts the earlier attempt rather than
 duplicating it.
 
-That includes a create cut between making the directory and setting its quota:
-the retry recognises the empty, quota-less directory as its own
-interrupted attempt and finishes it — same directory, quota and export.
-
-!!! note "The one directory a retry will not adopt"
-    A quota-less directory that already **holds data** is refused with
-    `already exists`, and its contents are left untouched: that is a name
-    collision with somebody else's files, not an interrupted create. Give the
-    claim a different volume name, or
-    [adopt the folder deliberately](../features/existing-folder.md). See
-    [Troubleshoot provisioning](troubleshoot.md#a-pvc-stuck-at-already-exists).
+!!! note "A create cut between the directory and its quota"
+    The retry finds an **empty** directory with no quota at exactly the
+    volume's path, takes it as its own interrupted create, sets the quota and
+    carries on. A directory there that holds anything is never
+    adopted; see [Troubleshoot provisioning](troubleshoot.md).
 
 ## StatefulSets
 

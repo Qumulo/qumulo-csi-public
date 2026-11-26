@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-data
+spec:
+  accessModes:
+    - ReadWriteMany   # NFS has no attach step, so many pods can share one volume
+  storageClassName: qumulo-nfs41
+  resources:
+    requests:
+      storage: 10Gi

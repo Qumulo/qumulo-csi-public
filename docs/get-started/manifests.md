@@ -10,8 +10,8 @@
 
 If your environment cannot run Helm against the cluster — a GitOps repository
 that stores rendered YAML, a change process that reviews manifests, or a
-cluster where Tiller-style access is not permitted — render the chart locally
-and apply the output.
+cluster where the pipeline cannot hold cluster credentials — render the chart
+locally and apply the output.
 
 !!! warning "On OpenShift, set `openshift.enabled: true` before rendering"
     `openshift.enabled: auto` detects OpenShift from the live cluster, and
@@ -23,29 +23,28 @@ and apply the output.
 
 ```bash
 # <-- EDIT: --version is the release's, from Qumulo or the chart package page
-cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin
-
 helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> \
+  --version 0.1.1 \
   --namespace qumulo-csi \
-  --values qumulo-values.yaml \
+  --values values.yaml \
+  --skip-tests \
   > qumulo-csi.yaml
 ```
 
 Render the published chart, not the `charts/` folder of a checkout: the folder
-chart asks for the moving `0.1.0` image tag, so the manifests you commit would
-not name one build.
+chart follows the branch it was checked out from, so the manifests you commit
+would not come from a release.
 
 Review, commit, and apply:
 
 ```bash
-kubectl create namespace qumulo-csi
+kubectl create namespace qumulo-csi   # skip if you already created it
 kubectl -n qumulo-csi apply -f qumulo-csi.yaml
 ```
 
-The pull secret and the API token Secret are **not** in that output — the chart
-renders no Secret. Create them first, as in
-[Install with Helm](install.md#2-get-access-to-the-images).
+The API token Secret is **not** in that output — the chart renders no Secret.
+Create it first, as in
+[Prerequisites](prerequisites.md#secure-access).
 
 ## What `helm template` cannot check
 
@@ -70,17 +69,20 @@ Re-render from the same values file on every upgrade, and diff before applying:
 
 ```bash
 helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> \
-  --namespace qumulo-csi --values qumulo-values.yaml > qumulo-csi.new.yaml
+  --version 0.1.1 \
+  --namespace qumulo-csi --values values.yaml --skip-tests > qumulo-csi.new.yaml
 diff -u qumulo-csi.yaml qumulo-csi.new.yaml
 ```
 
 !!! warning "`kubectl apply` will not delete what you stopped rendering"
     Objects removed from the manifest are left on the cluster. Use
-    `kubectl diff -f` and prune deliberately. Note that StorageClasses,
+    `kubectl diff -f` and prune deliberately. StorageClasses,
     VolumeSnapshotClasses and VolumeReplicationClasses carry
-    `helm.sh/resource-policy: keep` precisely because they outlive the release —
-    deleting one while PVs still reference it strands those volumes.
+    `helm.sh/resource-policy: keep` because they outlive the release.
+    Deleting one does not affect volumes that already exist — they still
+    mount, and they are still deleted on release — but no new volume can be
+    provisioned from it and no existing one expanded, until a class of that
+    name is back.
 
 ## Objects the manifest set contains
 

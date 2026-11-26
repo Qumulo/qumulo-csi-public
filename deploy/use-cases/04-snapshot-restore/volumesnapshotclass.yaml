@@ -1,0 +1,16 @@
+# Requires the cluster's snapshot CRDs and snapshot-controller (see the "Before
+# you start" section of deploy/use-cases/04-snapshot-restore/04-snapshot-restore.md), and the driver
+# installed with sidecars.snapshotter.enabled: true.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: qumulo-snapshots
+driver: csi.qumulo.com
+# Delete removes the snapshot from the Qumulo cluster with the VolumeSnapshot.
+# Retain keeps it on the cluster after the VolumeSnapshot is gone.
+deletionPolicy: Delete
+parameters:
+  csi.storage.k8s.io/snapshotter-secret-name: qumulo-api-token
+  csi.storage.k8s.io/snapshotter-secret-namespace: qumulo-csi
+  csi.storage.k8s.io/snapshotter-list-secret-name: qumulo-api-token
+  csi.storage.k8s.io/snapshotter-list-secret-namespace: qumulo-csi

@@ -1,0 +1,61 @@
+{{- if include "qumulo-csi-driver.createNodeSCC" . }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . -}}
+{{- $scc := include "qumulo-csi-driver.nodeSCCName" . -}}
+# The node plugin's own SCC: what the node pod needs and nothing more. It
+# mounts NFS in the host's namespace (privileged, hostPath), the kubelet reaches
+# it over a host-path socket, and it runs on the host network, which makes its
+# container ports host ports. No host PID or IPC, no added capabilities, only
+# the volume types the pod uses, and the default seccomp profile.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ $scc }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+allowPrivilegedContainer: true
+allowPrivilegeEscalation: true
+allowHostNetwork: true
+allowHostPorts: true
+allowHostDirVolumePlugin: true
+allowHostPID: false
+allowHostIPC: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+requiredDropCapabilities: []
+readOnlyRootFilesystem: false
+# The driver and both sidecars run as root (values.yaml, node.*SecurityContext).
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+# No projected: the node pod mounts no ServiceAccount token.
+volumes:
+  - emptyDir
+  - hostPath
+# Granted through RBAC (rbac-bindings.yaml), never by listing users or groups here.
+users: []
+groups: []
+priority: null
+---
+# Granted to the node service account by the RoleBinding <scc>-use in
+# rbac-bindings.yaml (or by the platform team, with rbac.createBindings=false).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $scc }}-use
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+rules:
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    resourceNames: [{{ $scc | quote }}]
+    verbs: ["use"]
+{{- end }}

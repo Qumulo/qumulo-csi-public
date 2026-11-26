@@ -3,9 +3,9 @@
 Installing on a cluster that cannot reach `ghcr.io`. The driver itself needs no
 internet access at runtime — it talks only to the Qumulo cluster and the
 Kubernetes API — so the whole problem is getting the two images and the chart
-inside. All three carry the build they came from, `<commit>` below; keep the
-tags identical on your mirror, because the chart asks for the images of its own
-build.
+inside. All three are named after the release, `0.1.1` below; keep the tags
+identical on your mirror, because the chart asks for the images of its own
+release.
 
 !!! note "On a disconnected OpenShift cluster"
     Mirror as described here, then redirect the cluster's pulls with an
@@ -17,16 +17,14 @@ build.
 From a host that can reach both registries:
 
 ```bash
-cat ~/.ghcr-pat | docker login ghcr.io -u <github-user> --password-stdin
-
-# <-- EDIT: your registry, and <commit> from the release
+# <-- EDIT: your registry
 docker buildx imagetools create \
-  -t registry.example.com/qumulo-csi-driver-controller:0.1.0-<commit> \
-  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.0-<commit>
+  -t registry.example.com/qumulo-csi-driver-controller:0.1.1 \
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1
 
 docker buildx imagetools create \
-  -t registry.example.com/qumulo-csi-driver-node:0.1.0-<commit> \
-  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.0-<commit>
+  -t registry.example.com/qumulo-csi-driver-node:0.1.1 \
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.1
 ```
 
 !!! warning "Use `imagetools create`, not pull-and-push"
@@ -38,7 +36,7 @@ docker buildx imagetools create \
 Confirm both platforms arrived:
 
 ```bash
-docker buildx imagetools inspect registry.example.com/qumulo-csi-driver-node:0.1.0-<commit> \
+docker buildx imagetools inspect registry.example.com/qumulo-csi-driver-node:0.1.1 \
   | grep -E 'Digest|Platform'
 ```
 
@@ -49,13 +47,13 @@ Where no host can reach both sides, move an OCI layout on media:
 ```bash
 # outside
 skopeo copy --all \
-  docker://ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.0-<commit> \
-  oci-archive:qumulo-csi-driver-node-0.1.0-<commit>.tar
+  docker://ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.1 \
+  oci-archive:qumulo-csi-driver-node-0.1.1.tar
 
 # inside
 skopeo copy --all \
-  oci-archive:qumulo-csi-driver-node-0.1.0-<commit>.tar \
-  docker://registry.example.com/qumulo-csi-driver-node:0.1.0-<commit>
+  oci-archive:qumulo-csi-driver-node-0.1.1.tar \
+  docker://registry.example.com/qumulo-csi-driver-node:0.1.1
 ```
 
 `--all` is what carries every platform. Repeat for the controller image, for
@@ -66,17 +64,16 @@ with `helm pull` ([step 2](#2-bring-the-chart-in)).
 
 ```bash
 # outside: pull the published chart as a file
-cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin   # <-- EDIT
-helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.0+<commit> # <-- EDIT
+helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.1 # <-- EDIT
 ```
 
-Carry `qumulo-csi-driver-0.1.0+<commit>.tgz` inside with the images. Quote the
-`--version` explicitly: without it Helm resolves whichever build the registry
-happens to serve, which need not be the one you mirrored.
+Carry `qumulo-csi-driver-0.1.1.tgz` inside with the images. Quote the
+`--version` explicitly: without it Helm resolves whichever version the
+registry happens to serve, which need not be the one you mirrored.
 
-Pull the released chart rather than packaging the `charts/` folder: a chart
-packaged from a checkout is always version `0.1.0` and asks for the moving
-`0.1.0` image tag, so it need not match the images you just mirrored.
+Pull the released chart rather than packaging the `charts/` folder, so the
+chart you install is exactly the one that was released with the images you
+just mirrored.
 
 ## 3. Mirror the sidecar images
 
@@ -89,7 +86,7 @@ Do this with the chart you have already brought inside ([step 2](#2-bring-the-ch
 so the listing itself needs no network:
 
 ```bash
-helm template qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \
+helm template qumulo-csi ./qumulo-csi-driver-0.1.1.tgz \
   --values qumulo-values.yaml \
   | grep -E '^\s+image:' | sort -u
 ```
@@ -160,9 +157,9 @@ image:
     ```yaml
     image:
       controller:
-        tag: "0.1.0-<commit>@sha256:<digest>"
+        tag: "0.1.1@sha256:<digest>"
       node:
-        tag: "0.1.0-<commit>@sha256:<digest>"
+        tag: "0.1.1@sha256:<digest>"
     ```
 
 ## 5. Private CA
@@ -187,7 +184,7 @@ The node plugin never calls the REST API, so it gets no CA mount.
 ## 6. Install
 
 ```bash
-helm install qumulo-csi ./qumulo-csi-driver-0.1.0+<commit>.tgz \
+helm install qumulo-csi ./qumulo-csi-driver-0.1.1.tgz \
   --namespace qumulo-csi --values qumulo-values.yaml
 ```
 

@@ -1,0 +1,380 @@
+{{- if .Values.metrics.enabled }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . -}}
+# Something for Prometheus to scrape.
+#
+# Two Services, because the two workloads are scraped differently. The
+# controller is an ordinary Deployment behind a ClusterIP. The node DaemonSet
+# runs hostNetwork: true, so its pod IP is the node IP and a ClusterIP would
+# load-balance across nodes and scrape a different one each time -- hence
+# headless, which gives Prometheus one target per node.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port.controller }}
+      targetPort: {{ .Values.metrics.port.controller }}
+      protocol: TCP
+    # The sidecars' own metrics. Separate ports rather than one, because each
+    # is a separate process with its own registry -- csi_sidecar_operations_seconds
+    # from the provisioner and from the resizer are different series that
+    # happen to share a name.
+    - name: provisioner
+      port: {{ .Values.metrics.port.provisioner }}
+      targetPort: {{ .Values.metrics.port.provisioner }}
+      protocol: TCP
+    - name: resizer
+      port: {{ .Values.metrics.port.resizer }}
+      targetPort: {{ .Values.metrics.port.resizer }}
+      protocol: TCP
+    {{- if .Values.sidecars.snapshotter.enabled }}
+    - name: snapshotter
+      port: {{ .Values.metrics.port.snapshotter }}
+      targetPort: {{ .Values.metrics.port.snapshotter }}
+      protocol: TCP
+    {{- end }}
+{{- if .Values.metrics.networkPolicy.enabled }}
+---
+# The controller's metrics name every volume's array and path; this
+# admits its metrics ports only from metrics.networkPolicy.from. A policy
+# selecting a pod denies every ingress it does not allow, so the
+# livenessprobe port (the kubelet) and the csi-addons sidecar's port (the
+# csi-addons controller) are allowed from anywhere, as they were.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "qumulo-csi-driver.controllerSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "qumulo-csi-driver.metricsPolicyFrom" . | nindent 8 }}
+      ports:
+        - port: {{ .Values.metrics.port.controller }}
+          protocol: TCP
+        - port: {{ .Values.metrics.port.provisioner }}
+          protocol: TCP
+        - port: {{ .Values.metrics.port.resizer }}
+          protocol: TCP
+        {{- if .Values.sidecars.snapshotter.enabled }}
+        - port: {{ .Values.metrics.port.snapshotter }}
+          protocol: TCP
+        {{- end }}
+    - ports:
+        - port: 29652
+          protocol: TCP
+        {{- if .Values.sidecars.csiAddons.enabled }}
+        - port: {{ .Values.sidecars.csiAddons.controllerPort }}
+          protocol: TCP
+        {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-node-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # Headless: one target per node, not one load-balanced pick per scrape.
+  clusterIP: None
+  selector:
+    {{- include "qumulo-csi-driver.nodeSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port.node }}
+      targetPort: {{ .Values.metrics.port.node }}
+      protocol: TCP
+{{- if and .Values.metrics.serviceMonitor.enabled (or .Values.metrics.forceEnable (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")) }}
+---
+# Guarded on the CRD, not merely on the value. A manifest for a kind the API
+# server does not know fails the whole release -- the same reason the
+# snapshotter sidecar is off by default -- and an operator who enabled metrics
+# should not have a chart install fail because their Prometheus is a plain
+# Deployment rather than the Operator.
+#
+# Both Services are selected by the labels every object in this chart carries,
+# and an endpoint naming a port a Service does not have simply finds no
+# targets, so one ServiceMonitor covers the controller, its sidecars and the
+# node DaemonSet.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $fullname }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "qumulo-csi-driver.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+    - port: provisioner
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+    - port: resizer
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+    {{- if .Values.sidecars.snapshotter.enabled }}
+    - port: snapshotter
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+    {{- end }}
+{{- end }}
+{{- if and .Values.metrics.prometheusRule.enabled (or .Values.metrics.forceEnable (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")) }}
+---
+# A starter rule set. Every alert here exists because the 0.1.0 validation lab
+# produced the failure it covers, and each one names what to do about it.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $fullname }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: qumulo-csi-driver
+      rules:
+        # Probe is process-only by design: one controller serves many
+        # arrays and the livenessprobe sidecar restarts the container on a
+        # failed Probe, so an unreachable array must not be a liveness
+        # failure. This alert is the signal Probe deliberately does not carry.
+        # It is about the transport only: a refused credential is an HTTP
+        # answer, and has the two rate alerts below.
+        - alert: QumuloCSIArrayUnreachable
+          expr: csi_qumulo_api_reachable == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Qumulo array {{ "{{ $labels.cluster }}" }} is not answering the driver"
+            description: >-
+              The driver's last REST call to {{ "{{ $labels.cluster }}" }} failed at the
+              transport: DNS, TCP, TLS or a timeout. Provisioning, expansion and
+              snapshots against every StorageClass naming this array are
+              failing. Check the array, the network path and the certificate
+              chain. The reading is retired once nothing has called the array
+              for an hour, so the alert clears when nothing depends on it any
+              more; it is not a monitor of the array itself -- use Qumulo's own
+              monitoring for that (see docs/reference/metrics.md).
+        # Observed in the lab: the controller stayed Ready for 36 minutes with an
+        # expired token while every provision failed. A rate, not the
+        # reachability gauge: the gauge is one per array and a class's token
+        # is per Secret, so one bad Secret made it flip.
+        - alert: QumuloCSICredentialRejected
+          expr: sum by (cluster) (increase(csi_qumulo_api_requests_total{status="401"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Qumulo array {{ "{{ $labels.cluster }}" }} is rejecting a token the driver uses"
+            description: >-
+              Calls to {{ "{{ $labels.cluster }}" }} are answered 401: a token in
+              one of the Secrets naming this array has expired or was revoked.
+              Every operation through a StorageClass using it fails. Replace the
+              token in the Secret; the next call uses it.
+        # A token without a privilege the driver needs; the README role
+        # lacked these for delete and expand.
+        #
+        # Not the two calls the driver makes best effort and carries on
+        # without -- resolving a file ID to a path (PRIVILEGE_ANALYTICS_READ,
+        # which the README says may be dropped) and measuring a snapshot's
+        # data. Their 403 is a warning in the log, not a missing privilege.
+        - alert: QumuloCSIPrivilegeMissing
+          expr: sum by (cluster, path_template) (increase(csi_qumulo_api_requests_total{status="403",path_template!~"/v1/files/resolve|/v1/files/\\{id\\}/aggregates/"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A driver token lacks a privilege on {{ "{{ $labels.cluster }}" }}"
+            description: >-
+              Calls to {{ "{{ $labels.path_template }}" }} on {{ "{{ $labels.cluster }}" }}
+              are answered 403. The operation's error names the privilege; the
+              chart README's "Required Qumulo API privileges" lists the set.
+        # Provisioning failures, by gRPC code, so the alert says which kind.
+        - alert: QumuloCSIProvisioningFailing
+          expr: sum by (code) (rate(csi_qumulo_rpc_total{method="/csi.v1.Controller/CreateVolume",code!="OK"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CreateVolume has been failing with {{ "{{ $labels.code }}" }} for ten minutes"
+            description: >-
+              PVCs are staying Pending. ResourceExhausted is a restore over the
+              50,000-entry (files plus directories) / 2 TiB cap; OutOfRange is a
+              restore into a PVC smaller than the snapshot's data (the message
+              names the size to request); Aborted is a restore that ran out of
+              budget and will resume on retry, and is only a problem if it
+              never stops; Unavailable is an array that did not answer, retried
+              by the provisioner; InvalidArgument is a bad StorageClass
+              parameter or volume name; FailedPrecondition is a managed path
+              that does not exist on the array, or a store root that must be
+              created before volumes can be provisioned under it -- an
+              operator action, not a retry; Internal is anything else the
+              driver did not expect, and means the controller log is the only
+              place the cause is written.
+        # The alarm is recovery-point age and NOT replication state: a
+        # target array reported ESTABLISHED with no error for 25 minutes while
+        # its source was dead. State tells you what the array thinks; age
+        # tells you how much data a failover would lose.
+        #
+        # A policy-mode relationship (REPLICATION_SNAPSHOT_POLICY)
+        # advances its recovery point only when a scheduled snapshot
+        # replicates, so on a healthy pair the age climbs to the schedule
+        # interval every cycle; one threshold fired for most of every hour.
+        # Those get their own threshold; continuous and the combined mode
+        # keep the strict one.
+        #
+        # Only the source end reports the mode, so a relationship this
+        # controller reads only from its target array -- a DR-side
+        # controller -- has no mode series, and the strict threshold fired on
+        # a healthy policy pair every hour. Those get a third threshold, by
+        # default the policy one: this controller cannot tell the two modes
+        # apart, and the source's own controller, which sees the mode, still
+        # alerts on the strict one.
+        #
+        # Where the controller has read the policy's schedule, its interval
+        # series decides instead, for any role: policyIntervalFactor times
+        # the interval, never below the strict threshold. The fixed branches
+        # then skip that relationship.
+        #
+        # max by (relationship_id) around the interval is load-bearing, not
+        # tidiness. group_left needs the right-hand side unique per
+        # relationship_id, and two controller replicas can both export one
+        # relationship's interval -- the csi-addons sidecar elects its own
+        # leader, so after a leadership change the replica that held
+        # it keeps its copy until the reconcile retires it. Two
+        # matches make the whole expression error, taking every branch of
+        # this alert with it, so the one case the operator most needs it in
+        # is the case it stopped working.
+        - alert: QumuloCSIReplicationRecoveryPointStale
+          expr: >-
+            (csi_qumulo_replication_recovery_point_age_seconds > on (relationship_id) group_left ()
+              clamp_min(max by (relationship_id) (csi_qumulo_replication_policy_interval_seconds) * {{ .Values.metrics.prometheusRule.policyIntervalFactor | default 1.5 }}, {{ .Values.metrics.prometheusRule.recoveryPointAgeSeconds }}))
+            or
+            ((csi_qumulo_replication_recovery_point_age_seconds > {{ .Values.metrics.prometheusRule.recoveryPointAgeSeconds }}
+              and on (relationship_id) csi_qumulo_replication_mode{mode!="REPLICATION_SNAPSHOT_POLICY"})
+            or
+            (csi_qumulo_replication_recovery_point_age_seconds > {{ .Values.metrics.prometheusRule.policyModeRecoveryPointAgeSeconds | default 5400 }}
+              and on (relationship_id) csi_qumulo_replication_mode{mode="REPLICATION_SNAPSHOT_POLICY"})
+            or
+            (csi_qumulo_replication_recovery_point_age_seconds > {{ .Values.metrics.prometheusRule.unknownModeRecoveryPointAgeSeconds | default (.Values.metrics.prometheusRule.policyModeRecoveryPointAgeSeconds | default 5400) }}
+              unless on (relationship_id) csi_qumulo_replication_mode))
+            unless on (relationship_id) csi_qumulo_replication_policy_interval_seconds
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication {{ "{{ $labels.relationship_id }}" }} ({{ "{{ $labels.role }}" }}) is {{ "{{ $value | humanizeDuration }}" }} behind"
+            description: >-
+              The recovery point of this relationship has not advanced. A
+              failover now would lose everything written since it. Do not wait
+              for the state to change -- the target reports ESTABLISHED with a
+              dead source.
+        - alert: QumuloCSIVolumeNearQuota
+          expr: csi_qumulo_volume_used_bytes / csi_qumulo_volume_quota_bytes > {{ .Values.metrics.prometheusRule.volumeNearQuotaRatio }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Volume {{ "{{ $labels.volume_name }}" }} is near its Qumulo directory quota"
+            description: >-
+              Expand the PVC, or writes will start failing with ENOSPC. Note
+              this figure is as fresh as the last controller RPC that read the
+              quota, not a sample -- see docs/reference/metrics.md.
+        # Watch this rather than the VolumeReplication object's conditions. On
+        # csi-addons v0.15.0 a Completed primary keeps reading Healthy after
+        # the relationship is removed on the arrays, so the object reports a
+        # protected volume when there is none (docs/reference/metrics.md, Replication).
+        # Keyed by volume, because an absent relationship has no relationship
+        # id to alert on.
+        #
+        # == 0 cannot see a volume with no series at all, so the driver makes
+        # sure every protected volume has one: a report that resolves to a
+        # group's relationship exports its verdict for every member of that
+        # group, not only for the dataSource csi-addons asks about.
+        # There is deliberately no companion rule alerting on an absent
+        # series: a volume with no VolumeReplication is not replicated by
+        # design, and a rule joined to kube_persistentvolume_info would fire
+        # for every unreplicated volume in the cluster.
+        - alert: QumuloCSIVolumeUnprotected
+          expr: csi_qumulo_volume_replication_protected == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Volume {{ "{{ $labels.volume_name }}" }} has no replication relationship"
+            description: >-
+              The driver looked for a replication relationship covering this
+              volume and found none. Its VolumeReplication object may still
+              report Healthy; do not trust it. A failover now has nothing to
+              fail over to.
+
+        # A listing that is quietly short is the one failure CSI gives the
+        # driver no way to report: ListVolumesResponse has no field for a
+        # class it left out. Skipping one misconfigured class is much better
+        # than failing every class, but only if the skip is visible --
+        # otherwise a reconciler compares PersistentVolumes against a listing
+        # that is missing a class's volumes and nobody is told.
+        - alert: QumuloCSIInventoryClassSkipped
+          expr: csi_qumulo_inventory_class_credential_usable == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "StorageClass {{ "{{ $labels.class }}" }} is being left out of ListVolumes"
+            description: >-
+              The inventory could not build a credential for this class, so
+              its volumes are missing from every ListVolumes answer while
+              this lasts. reason={{ "{{ $labels.reason }}" }}: "forbidden"
+              means the class names a Secret this release does not -- add it
+              to rbac.extraSecrets, or set rbac.clusterWideSecrets. "missing"
+              means no such Secret exists. "unusable" means the class names
+              no Secret, or its Secret has no token key.
+{{- end }}
+{{- end }}

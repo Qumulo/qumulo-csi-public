@@ -1,0 +1,19 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-team-a
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
+parameters:
+  server: <qumulo-cluster-address>
+  storeRealPath: /csi/team-a
+  storeExportPath: /csi/team-a
+  protocol: nfs4.1
+  # This team's own Secret -- see 02-secret.md-style: kubectl -n qumulo-csi
+  # create secret generic qumulo-team-a --from-file=token=./a.token
+  csi.storage.k8s.io/provisioner-secret-name: qumulo-team-a
+  csi.storage.k8s.io/provisioner-secret-namespace: qumulo-csi
+  csi.storage.k8s.io/controller-expand-secret-name: qumulo-team-a
+  csi.storage.k8s.io/controller-expand-secret-namespace: qumulo-csi

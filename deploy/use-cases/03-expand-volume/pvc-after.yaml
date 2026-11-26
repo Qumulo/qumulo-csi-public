@@ -1,0 +1,14 @@
+# Same PVC as pvc-before.yaml, only `storage` changed. The pod keeps running --
+# there is no restart and no remount, because expansion is just a quota change
+# on the Qumulo cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: qumulo-nfs41
+  resources:
+    requests:
+      storage: 100Gi

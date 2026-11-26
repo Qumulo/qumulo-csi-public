@@ -1,0 +1,27 @@
+# gitleaks configuration for `make secret-scan` and the CI "secret scan" job.
+#
+# gitleaks' default rules, plus one allowlist: the fake credentials that tests
+# in this repository use on purpose. Each entry is the exact fake value, so it
+# matches nothing else -- a real token added next to one of them, in the same
+# file or the same commit, is still reported. Never allowlist by path or by
+# commit here: that hides whatever else the file or commit carries.
+#
+# To add an entry, the value must be obviously fake (it says so in its own
+# words) and the line that uses it must be test code. A real credential that
+# was committed is never allowlisted: revoke it on the array it belongs to,
+# then remove it from the history.
+
+title = "qumulo-csi-driver"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used by tests"
+regexTarget = "match"
+regexes = [
+  # cmd/qumulo-csi-repoint/main_test.go: the token a fake peer array expects.
+  '''super-secret-bearer-token-value''',
+  # test/live/get_capacity_test.go: a token that must be refused.
+  '''not-a-valid-token''',
+]

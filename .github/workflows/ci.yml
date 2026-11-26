@@ -1,0 +1,382 @@
+# Continuous integration.
+#
+# Every gate here is a Makefile target, and `make ci` runs the same set in the
+# same order. That is deliberate: the failure mode this workflow exists to fix
+# is a quality gate that is real but hand-run, whose result is then committed
+# as a point-in-time report and slowly stops being true. A workflow that
+# reimplemented the gates in YAML would reintroduce exactly that drift one
+# level up, so it invokes the targets instead of duplicating them.
+#
+# Scope: everything that needs no cluster, no registry and no root. The
+# `make ci` target itself still excludes docker-*, live-* and e2e-* for that
+# reason -- see the `ci` target in the Makefile -- but this workflow also
+# runs an image-scan job below that calls `docker build` directly (no push,
+# no registry, no live cluster) to scan the images this repo ships; it is
+# a job in its own right rather than folded into `make ci` because it is
+# slower (image build + a live vulnerability-DB scan), and a chart-image-scan
+# job that scans the third-party images the chart deploys. Both fail on a
+# HIGH or CRITICAL CVE that has a fix.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, 'release_*']
+  push:
+    branches: [main, 'release_*']
+  workflow_dispatch:
+
+# A force-push should not leave the superseded run burning a runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only. Nothing here publishes, comments or pushes.
+permissions:
+  contents: read
+
+env:
+  # The go directive in go.mod is a floor, not a pin: `auto` lets the runner
+  # fetch a matching toolchain rather than failing when the preinstalled Go is
+  # older. `local` would fail outright. See ARCHITECTURE.md.
+  GOTOOLCHAIN: auto
+
+# Seven jobs rather than one script, so a red X names the thing that broke
+# instead of handing you a log to scroll.
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # `make lint` installs the pinned golangci-lint when it is absent, which
+      # it always is on a fresh runner. Putting GOPATH/bin on PATH explicitly
+      # rather than trusting setup-go to have done it keeps the second half of
+      # that target -- the bare `golangci-lint run` -- from failing on a
+      # detail of the action's implementation.
+      - name: Put GOPATH/bin on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # The linter version is pinned in the Makefile (GOLANGCI_VERSION) and
+      # nowhere else. golangci-lint-action would be faster but would put the
+      # pin in a second place, and two pins drift.
+      - run: make lint 2>&1 | tee lint.log
+      # A live, per-run functionality summary instead of numbers kept by
+      # hand. Lands in the job summary only -- nothing
+      # committed, nothing to go stale. `if: always()` so a red lint run still
+      # gets a summary line instead of silently skipping it.
+      - name: Functionality summary
+        if: always()
+        run: |
+          {
+            echo "### Functionality status -- lint"
+            echo
+            if grep -qx '0 issues.' lint.log; then
+              echo "- golangci-lint: 0 issues"
+            else
+              echo "- golangci-lint: issues found -- see the \`make lint\` step log above"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  commit-authors:
+    name: commit authors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only meaningful for a PR: "new commits" means commits since this PR's
+    # base, and a push (a merge landing on main/release_*) has no equivalent
+    # worth hardcoding -- by the time it lands the commits are already
+    # reviewed, and the base for a push is the ref's own previous state, not
+    # a fork point.
+    #
+    # Scoped with the rest of this workflow, to PRs into main and release_*.
+    # A PR onto a long-lived feature branch is therefore not checked, and the
+    # authorship it carries is caught when that branch is PR'd onward -- its
+    # commits are in that PR's range too, since nothing excludes them. What
+    # this does not cover is a feature branch merged into another by a route
+    # that never reaches main or release_*; that is accepted deliberately
+    # rather than by oversight.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The default shallow checkout has nothing to diff against -- this
+          # needs every commit back to the PR's base to be present.
+          fetch-depth: 0
+      - name: No commit author outside @qumulo.com or a GitHub noreply address
+        run: make check-commit-authors BASE_REF=${{ github.event.pull_request.base.sha }}
+
+  # Every PR and every push, unlike commit-authors: a secret that lands is
+  # exposed the moment the branch is pushed, reviewed or not. The range is the
+  # change's own commits -- the PR's since its base, a push's since the ref's
+  # previous state -- so a finding names the change that introduced it. A
+  # newly created ref (no previous state) and a manual run scan everything
+  # reachable from HEAD, which is what `make ci` does locally. The scanner and
+  # its version live in the Makefile (GITLEAKS_VERSION); the rules and the
+  # allowlist of test fakes in .gitleaks.toml.
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A range scan needs both ends present; the default shallow
+          # checkout has one commit.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Event values go through env, not ${{ }} inside the script, so nothing
+      # from the event is ever spliced into shell source.
+      - name: No secret in the commits this change adds
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          range=""
+          if [ "$EVENT" = pull_request ]; then
+            range="$PR_BASE..HEAD"
+          elif [ "$EVENT" = push ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            range="$PUSH_BEFORE..HEAD"
+          fi
+          echo "scanning: ${range:-every commit reachable from HEAD}"
+          make secret-scan SCAN_RANGE="$range"
+
+  test:
+    name: unit + conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # One definition of what this build is called, per the Makefile's own
+      # note on the target. Cheap provenance in the log.
+      - run: make version
+      - name: Unit tests (race)
+        run: make test 2>&1 | tee test.log
+      # Fails below 80% for cmd/qumulo-csi-driver, the startup wiring.
+      - name: Startup code coverage
+        run: make coverage-startup
+      # The official csi-sanity suite against the real driver binary over a
+      # real gRPC socket, with cmd/mock-qumulo-server standing in for the
+      # cluster. Prints its own pass/skip counts, which is what keeps the
+      # numbers quoted in ARCHITECTURE.md and docs/reference/supported-features.md honest.
+      - name: CSI conformance (csi-sanity)
+        run: make sanity-test 2>&1 | tee sanity.log
+      # Same live-summary approach as the lint job: package-level pass/fail
+      # plus csi-sanity's own pass/fail/skip split, straight from this run's
+      # logs -- no reimplementing what `make test`/`make sanity-test` already
+      # compute, just surfacing it where a reviewer sees it without opening logs.
+      - name: Functionality summary
+        if: always()
+        run: |
+          {
+            echo "### Functionality status -- unit tests & CSI conformance"
+            echo
+            if grep -q '^FAIL' test.log; then
+              echo "- unit tests (\`make test\`: \`go test -tags defects ./... -race\`): FAILED -- see the log above"
+            else
+              echo "- unit tests (\`make test\`: \`go test -tags defects ./... -race\`): $(grep -c '^ok' test.log) package(s) passing"
+            fi
+            # ginkgo colorizes each segment separately, so raw escape codes
+            # break a contiguous match even though each word looks intact;
+            # strip them first rather than relying on --no-color always
+            # being what the terminal-detection in this environment picks.
+            sanity_line=$(sed -r 's/\x1b\[[0-9;]*m//g' sanity.log | \
+              grep -oE '[0-9]+ Passed \| [0-9]+ Failed \| [0-9]+ Pending \| [0-9]+ Skipped' | tail -1)
+            echo "- csi-sanity conformance: ${sanity_line:-no summary line found -- see the log above}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  chart:
+    name: chart + manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Pinned exactly, not to a floating v3. Chart.yaml sets
+      # kubeVersion: ">=1.36.0", which renders only because Helm's own default
+      # capabilities version is 1.36.0 -- so the Helm version is load-bearing
+      # for `helm template`, and a drifting one can move the goldens with no
+      # chart change. This is the version the committed goldens were generated
+      # under. See ARCHITECTURE.md.
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.4
+      # example-check installs the pinned kubeconform when it is absent, which
+      # it always is on a fresh runner; same reasoning as the lint job.
+      - name: Put GOPATH/bin on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # Also asserts Chart.yaml appVersion still matches the VERSION file.
+      - name: Helm lint and chart version
+        run: make helm-lint
+      - name: Chart goldens
+        run: make helm-golden
+      # Renders the chart as OpenShift sees it and evaluates the result against
+      # models of SecurityContextConstraints and Pod Security Admission --
+      # including the SCC the chart renders itself, read back and used to admit
+      # the node pod. That is the installer's claim: no manual
+      # `oc adm policy add-scc-to-user` step. Needs the helm pinned above and
+      # nothing else; no cluster, no array, no network.
+      - name: OpenShift admission tier
+        run: make openshift-test
+      - name: Alert rules (promtool check and unit tests)
+        run: make alert-rules-test
+      # The check that actually matters: renders the chart and feeds its
+      # StorageClass parameters through the driver's own validation. The
+      # driver rejects unknown parameters, so a chart emitting one key it does
+      # not recognise fails every provision, and neither helm lint nor
+      # go test ./... would catch it.
+      - name: Chart/driver contract
+        run: make helm-verify
+      # Schema validation via kubeconform, which needs no cluster. This
+      # deliberately does not use `kubectl apply --dry-run=client`: that
+      # resolves kinds through API discovery and so fails every file when no
+      # cluster is reachable, which is exactly how it failed here on the first
+      # run. `make example-check-cluster` still does the real-API-server
+      # check, and stays hand-run.
+      - name: Example manifests
+        run: make example-check
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Its own job on purpose. The tool is pinned but the vulnerability
+      # database is live, so this is the one gate that can turn red without
+      # anyone touching the tree -- which is what it is for. Isolating it
+      # means that signal is legible instead of looking like a flaky test.
+      - run: make govulncheck
+
+  image-scan:
+    name: image CVE scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # govulncheck above scans Go module dependencies; it has no visibility
+    # into the OS packages layered into the built controller/node images.
+    # This job replaces image scan summaries once kept by hand
+    # -- a Trivy scan of the actual images this repo ships -- now run on
+    # every PR and landed in the job summary instead of a committed file.
+    #
+    # The full scans are report-only; the HIGH/CRITICAL scans gate, counting
+    # only findings that have a fix (ignore-unfixed), so what fails the job
+    # is always something a rebuild or a bump can clear. The Dockerfile's
+    # `dnf upgrade` takes every package to the newest errata at build time,
+    # so a fixable finding here means a base pin or a package to look at.
+    # Like govulncheck, it can turn red with no change to the tree: a new
+    # fix published for something in the image is news. (Report-only until
+    # 0.1.1, when a customer's scan found what this job had been printing.)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # docker build only -- no push, no registry, no live cluster, so this
+      # does not need what the Makefile's `ci` target comment excludes
+      # docker-* targets for. Builds both images once; each is scanned twice
+      # below (all severities, then HIGH/CRITICAL only) without rebuilding.
+      # The node image installs nfs-utils from the RHEL repositories and so
+      # needs the RHEL activation key (see the Makefile's RH_ENV). A pull
+      # request from a fork gets no repository secrets, so there the node
+      # image is not built and its two scans are skipped, with a notice;
+      # the controller needs no subscription and is always scanned.
+      - name: Build images
+        env:
+          RH_ORG_ID: ${{ secrets.RH_ORG_ID }}
+          RH_ACTIVATION_KEY: ${{ secrets.RH_ACTIVATION_KEY }}
+        run: |
+          make docker-build-controller
+          if [ -n "$RH_ORG_ID" ] && [ -n "$RH_ACTIVATION_KEY" ]; then
+            make docker-build-node
+            echo "NODE_BUILT=true" >> "$GITHUB_ENV"
+          else
+            echo "::notice::RH_ORG_ID / RH_ACTIVATION_KEY not available (fork pull request?): node image not built or scanned"
+          fi
+      - run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+      - name: Trivy -- controller (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: qumulo-csi-driver-controller:${{ env.VERSION }}
+          format: table
+          output: trivy-controller.txt
+          exit-code: '0'
+      - name: Trivy -- controller (fixable HIGH/CRITICAL, gating)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: qumulo-csi-driver-controller:${{ env.VERSION }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          output: trivy-controller-high.txt
+          exit-code: '1'
+      - name: Trivy -- node (all severities)
+        if: env.NODE_BUILT == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: qumulo-csi-driver-node:${{ env.VERSION }}
+          format: table
+          output: trivy-node.txt
+          exit-code: '0'
+      - name: Trivy -- node (fixable HIGH/CRITICAL, gating)
+        if: always() && env.NODE_BUILT == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: qumulo-csi-driver-node:${{ env.VERSION }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          output: trivy-node-high.txt
+          exit-code: '1'
+      - name: Publish scan summary
+        if: always()
+        run: |
+          {
+            echo "### Image CVE scan (Trivy, this run)"
+            echo
+            echo "The full scans are report-only; a fixable HIGH/CRITICAL finding fails this job."
+            for pair in "controller:trivy-controller.txt" "controller (fixable HIGH/CRITICAL):trivy-controller-high.txt" \
+                        "node:trivy-node.txt" "node (fixable HIGH/CRITICAL):trivy-node-high.txt"; do
+              label="${pair%%:*}"
+              file="${pair#*:}"
+              echo
+              echo "<details><summary>${label}</summary>"
+              echo
+              echo '```'
+              cat "${file}" 2>/dev/null || echo "(no output captured)"
+              echo '```'
+              echo "</details>"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  chart-image-scan:
+    name: chart image CVE scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The sidecars and test images the chart deploys, which image-scan does
+    # not build and so never saw: the 0.1.1 sidecars carried 10 criticals
+    # nobody here had looked at. Fails on a fixable HIGH/CRITICAL in any of
+    # them, except an image held on purpose in
+    # test/release/image-scan-exceptions.txt, and on an expired exception.
+    # Like govulncheck, the database is live, so this can turn red with no
+    # change to the tree; the fix is a bump (tag and digest together).
+    # The csi-addons sidecar is our rebuild on ghcr.io/qumulo, which is not
+    # anonymously pullable, so Trivy reads it with this run's token (read
+    # only). A fork PR's token cannot, and that image's scan fails there.
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make chart-image-scan
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

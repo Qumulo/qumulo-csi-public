@@ -1,0 +1,152 @@
+{{- /*
+Each class is rendered to a string first, so the render can be compared with
+the class already on the cluster before anything is applied. See
+qumulo-csi-driver.storageClassDoc.
+*/ -}}
+{{- range $sc := .Values.storageClasses }}
+{{- $doc := include "qumulo-csi-driver.storageClassDoc" (dict "root" $ "sc" $sc) }}
+{{- include "qumulo-csi-driver.guardImmutable" (dict "kind" "StorageClass" "apiVersion" "storage.k8s.io/v1" "name" $sc.name "new" (fromYaml $doc) "fields" (list "provisioner" "reclaimPolicy" "volumeBindingMode" "parameters")) }}
+---
+{{ $doc }}
+{{- end }}
+
+{{- define "qumulo-csi-driver.storageClassDoc" -}}
+{{- $root := .root -}}
+{{- $sc := .sc -}}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $sc.name }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" $root | nindent 4 }}
+  {{- /*
+  Never deleted by Helm. An upgrade rendered without the values file (`--set`
+  alone) renders no classes, and Helm used to delete every one the release
+  managed. Removing a class from values now leaves it on the cluster;
+  delete it with kubectl once nothing uses it.
+  */}}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- if $sc.isDefault }}
+    storageclass.kubernetes.io/is-default-class: "true"
+    {{- end }}
+provisioner: {{ $root.Values.driverName }}
+reclaimPolicy: {{ $sc.reclaimPolicy | default "Delete" }}
+# Expansion is a quota change on the cluster with no node-side step, so it is
+# safe to allow by default.
+allowVolumeExpansion: {{ if hasKey $sc "allowVolumeExpansion" }}{{ $sc.allowVolumeExpansion }}{{ else }}true{{ end }}
+# WaitForFirstConsumer buys nothing: an NFS export is reachable from every node,
+# so there is no topology for the scheduler to resolve.
+volumeBindingMode: Immediate
+parameters:
+  # The address nodes mount from. It defaults to the management endpoint, but
+  # can differ -- NFS traffic often goes via a floating IP that the REST API
+  # does not.
+  # Mandatory: this driver keeps no fallback cluster, so a class that names no
+  # server can never be provisioned. Failing at render time puts that in front
+  # of whoever is editing the values file.
+  server: {{ required (printf "storageClasses[%s]: server is required -- a valid Qumulo endpoint must be set per StorageClass, because this driver keeps no fallback cluster" $sc.name) $sc.server | quote }}
+  # basePath is the cluster filesystem path; exportBasePath is how that parent
+  # is reachable over NFS. They coincide unless the export is mounted somewhere
+  # other than the filesystem root, so exportBasePath defaults to basePath.
+  storeRealPath: {{ $sc.basePath | quote }}
+  storeExportPath: {{ $sc.exportBasePath | default $sc.basePath | quote }}
+  {{- with $sc.apiUrl }}
+  # REST endpoint for this class's cluster, when it is not https://<server>:8000.
+  apiUrl: {{ . | quote }}
+  {{- end }}
+  {{- $secret := required (printf "storageClasses[%s]: secretName is required -- every request must carry its own credential, because this driver keeps no fallback token" $sc.name) $sc.secretName }}
+  {{- if $secret }}
+  # Per-cluster credential. The sidecars consume these keys and deliver the
+  # Secret's contents in each RPC's secrets map, which is how one controller
+  # authenticates to several clusters. provisioner-* is also what DeleteVolume
+  # gets, so the reference must not depend on a PVC that will be gone by then.
+  csi.storage.k8s.io/provisioner-secret-name: {{ $secret | quote }}
+  csi.storage.k8s.io/provisioner-secret-namespace: {{ $sc.secretNamespace | default $root.Release.Namespace | quote }}
+  csi.storage.k8s.io/controller-expand-secret-name: {{ $secret | quote }}
+  csi.storage.k8s.io/controller-expand-secret-namespace: {{ $sc.secretNamespace | default $root.Release.Namespace | quote }}
+  {{- end }}
+  {{- with $sc.protocol }}
+  protocol: {{ . | quote }}
+  {{- end }}
+  {{- with $sc.provisioningModel }}
+  provisioningModel: {{ . | quote }}
+  {{- end }}
+  {{- with $sc.mountPermissions }}
+  mountPermissions: {{ . | quote }}
+  {{- end }}
+  {{- /* An explicit emptiness test rather than `with`, which treats 0 as
+         unset: tenantID: 0 was dropped here and the class provisioned against
+         the cluster's default tenant instead, with nothing saying so. The
+         values schema refuses 0 at install; this makes sure a value that gets
+         past it still reaches the driver, which refuses it too. */ -}}
+  {{- if and (not (kindIs "invalid" $sc.tenantID)) (ne (printf "%v" $sc.tenantID) "") }}
+  # Scopes this class's exports to a Qumulo network tenant, by id or by name.
+  # dedicated-export only -- see the chart README.
+  tenantID: {{ $sc.tenantID | quote }}
+  {{- end }}
+  {{- with $sc.allowedClients }}
+  # IPs and CIDR blocks permitted to mount. dedicated-export only.
+  allowedClients: {{ join "," . | quote }}
+  {{- end }}
+  {{- if and $sc.allowAnyClient (not $sc.allowedClients) }}
+  # This class's exports admit any NFS client, as root, with no
+  # authentication, on purpose; the driver refuses an open class without
+  # it. dedicated-export only.
+  allowAnyClient: "true"
+  {{- end }}
+  {{- with $sc.securityFlavor }}
+  # NFS authentication flavour. The controller makes the export *require* this,
+  # and the node mounts with the matching sec= option -- both halves, or the
+  # protocol negotiates quietly back down to sys.
+  securityFlavor: {{ . | quote }}
+  {{- end }}
+  {{- with $sc.adDomain }}
+  # Nests this class's volumes under a subdirectory named for the domain, so
+  # each domain's volumes live in their own tree. A layout parameter only -- it
+  # does not grant or restrict access. See the chart README.
+  adDomain: {{ . | quote }}
+  {{- end }}
+  {{- with $sc.snapshotSchedule }}
+  # Attaches a Qumulo snapshot policy to every volume this class provisions.
+  # The snapshots it takes are deliberately NOT visible as VolumeSnapshots --
+  # see the chart README.
+  snapshotSchedule: {{ . | quote }}
+  {{- end }}
+  {{- if $sc.allowForeignSnapshotRestore }}
+  # Restores a snapshot not named as this driver's are whose source is gone,
+  # which the driver otherwise refuses. See the chart README.
+  allowForeignSnapshotRestore: "true"
+  {{- end }}
+{{- /*
+A class that sets no mountOptions at all gets kernel defaults, and a "soft"
+mount returns EIO to applications during a Qumulo rolling upgrade or node
+evacuation instead of pausing I/O until the array comes back. So "hard,
+timeo=600" is the rendered default -- not just a values.yaml comment -- and an
+operator who wants "soft" gets it by setting mountOptions explicitly, which is
+also respected verbatim. See the chart README, "Choosing mount options for
+planned maintenance".
+
+The default is protocol-aware, and has to be. The node image ships mount.nfs
+but runs no rpc.statd, so an NFSv3 mount without nolock fails outright -- which
+meant the default above, applied to an nfs3 class, rendered a class that could
+never mount. nfs4.1 locks in-protocol and ignores nolock, so it is added only
+where it does something.
+
+This covers the class that sets no mountOptions. A class that sets them
+explicitly is still rendered verbatim and can still omit nolock, so the node
+adds it there at mount time -- see nfsLockOptionFor in
+pkg/driver/node_server.go. Both halves exist because neither covers the other:
+the default cannot reach an explicit list, and the node cannot put an option
+into a PV that was provisioned before it existed.
+*/}}
+{{- $mountOptions := $sc.mountOptions }}
+{{- if not $mountOptions }}
+{{- $mountOptions = list "hard" "timeo=600" }}
+{{- if eq (toString ($sc.protocol | default "")) "nfs3" }}
+{{- $mountOptions = append $mountOptions "nolock" }}
+{{- end }}
+{{- end }}
+mountOptions:
+  {{- toYaml $mountOptions | nindent 2 }}
+{{- end -}}

@@ -1,0 +1,12 @@
+# A StorageClass is cluster-wide -- anyone who can create a PVC can name any
+# class. This quota is what actually stops team-a from using team-b's class;
+# the class itself does not.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: block-other-teams
+  namespace: team-a
+spec:
+  hard:
+    qumulo-team-b.storageclass.storage.k8s.io/requests.storage: "0"
+    qumulo-team-b.storageclass.storage.k8s.io/persistentvolumeclaims: "0"

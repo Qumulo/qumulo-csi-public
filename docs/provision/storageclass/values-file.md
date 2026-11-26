@@ -1,22 +1,20 @@
 # A complete values file
 
 The other pages in this section show only the `storageClasses` part, to keep
-the examples short. This page shows a full `qumulo-values.yaml` so you can see
+the examples short. This page shows a full `values.yaml` so you can see
 where that part fits.
 
 ```yaml
-# qumulo-values.yaml
+# values.yaml
 image:
   controller:
-    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller
     tag: ""                        # leave empty -- see the note below
     pullPolicy: ""                 # leave empty
   node:
-    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node
     tag: ""
     pullPolicy: ""
-  pullSecrets:                     # required: the images are private
-    - name: ghcr-pull
+  # repository is left out on purpose: the published chart already names the
+  # public image repositories. Set it only for your own registry or mirror.
 
 qumulo:
   apiTimeout: 10s
@@ -28,7 +26,7 @@ controller:
 
 node:
   logLevel: info
-  # kubeletDir: /var/lib/rancher/k3s/agent/kubelet    # only on k3s / microk8s
+  # kubeletDir: /var/snap/microk8s/common/var/lib/kubelet   # MicroK8s only
 
 storageClasses:
   - name: qumulo-nfs
@@ -45,9 +43,9 @@ Install it with:
 
 ```bash
 helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> \
+  --version 0.1.1 \
   --namespace qumulo-csi \
-  --values qumulo-values.yaml
+  --values values.yaml
 ```
 
 !!! note "Leave `tag` empty unless you have a reason not to"

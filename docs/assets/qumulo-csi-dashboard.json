@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Qumulo CSI driver (csi.qumulo.com). Read the Metrics reference before building an alert on anything here: the driver holds no standing connection to any array, so every array-side figure is the last value an RPC produced, not a sample.",
+  "description": "Qumulo CSI driver (csi.qumulo.com). Read docs/reference/metrics.md before building an alert on anything here: the driver holds no standing connection to any array (ARCHITECTURE.md Rule 0), so every array-side figure is the last value an RPC produced, not a sample.",
   "editable": true,
   "graphTooltip": 1,
   "links": [],
@@ -22,9 +22,9 @@
     },
     {
       "id": 2,
-      "type": "stat",
+      "type": "singlestat",
       "title": "Arrays reachable",
-      "description": "1 when the driver's LAST REST call to that array got a usable answer; 0 on a transport failure or a 401/403. Last observed, NOT sampled -- an idle controller's value is as old as its last request, so 0 is a real alarm and 1 is not proof the array is up. Probe deliberately carries no array signal (KB-07).",
+      "description": "1 when the driver's LAST REST call to that array got a usable answer; 0 on a transport failure or a 401/403. Last observed, NOT sampled -- an idle controller's value is as old as its last request, so 0 is a real alarm and 1 is not proof the array is up. Probe deliberately carries no array signal. Shows the LOWEST value over the selected arrays: UNREACHABLE if any one is down; the 'API calls by status' panel shows which.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -41,66 +41,62 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
-          "expr": "csi_qumulo_api_reachable{cluster=~\"$cluster\"}",
-          "legendFormat": "{{cluster}}",
-          "range": true,
-          "instant": false,
+          "expr": "min(csi_qumulo_api_reachable{cluster=~\"$cluster\"})",
+          "legendFormat": "",
           "refId": "A",
-          "format": "time_series"
+          "instant": true
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "UNREACHABLE",
-                  "color": "red",
-                  "index": 0
-                },
-                "1": {
-                  "text": "reachable",
-                  "color": "green",
-                  "index": 1
-                }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
+      "valueName": "current",
+      "format": "none",
+      "decimals": 0,
+      "mappingType": 1,
+      "valueMaps": [
+        {
+          "op": "=",
+          "value": "0",
+          "text": "UNREACHABLE"
         },
-        "overrides": []
+        {
+          "op": "=",
+          "value": "1",
+          "text": "all reachable"
+        },
+        {
+          "op": "=",
+          "value": "null",
+          "text": "no data"
+        }
+      ],
+      "colorBackground": true,
+      "colorValue": false,
+      "thresholds": "1,1",
+      "colors": [
+        "#d44a3a",
+        "#d44a3a",
+        "#299c46"
+      ],
+      "sparkline": {
+        "show": false
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "fieldOptions": {
+          "thresholds": [
+            {
+              "color": "red",
+              "value": -1
+            },
+            {
+              "color": "green",
+              "value": 0.5
+            }
+          ]
         }
       }
     },
     {
       "id": 3,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Failing RPCs",
       "description": "Non-OK CSI and csi-addons RPCs per second, by method and gRPC code. Aborted on a restore is normal -- the restore ran out of budget and resumes on retry -- and is only a problem if it never stops.",
       "datasource": {
@@ -119,33 +115,51 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "sum by (method, code) (rate(csi_qumulo_rpc_total{code!=\"OK\"}[5m]))",
           "legendFormat": "{{method}} {{code}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 4,
@@ -212,7 +226,7 @@
     },
     {
       "id": 6,
-      "type": "timeseries",
+      "type": "graph",
       "title": "RPC rate by method",
       "description": "Every CSI and csi-addons RPC this driver served.",
       "datasource": {
@@ -231,37 +245,55 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "sum by (method) (rate(csi_qumulo_rpc_total[5m]))",
           "legendFormat": "{{method}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 7,
-      "type": "timeseries",
+      "type": "graph",
       "title": "RPC latency, p99 and p50",
       "description": "From the driver's own histogram: ONE attempt. The sidecars' csi_sidecar_operations_seconds covers every attempt plus the backoff between them, and a provisioning problem usually shows there first.",
       "datasource": {
@@ -280,46 +312,60 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, method) (rate(csi_qumulo_rpc_duration_seconds_bucket[5m])))",
           "legendFormat": "p99 {{method}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "histogram_quantile(0.50, sum by (le, method) (rate(csi_qumulo_rpc_duration_seconds_bucket[5m])))",
           "legendFormat": "p50 {{method}}",
-          "range": true,
-          "instant": false,
-          "refId": "B",
-          "format": "time_series"
+          "refId": "B"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 8,
@@ -336,7 +382,7 @@
     },
     {
       "id": 9,
-      "type": "timeseries",
+      "type": "graph",
       "title": "API calls by status",
       "description": "status=\"transport\" means the array never answered at all -- DNS, TCP, TLS or timeout. A 401 proves the array is up and the credential is not.",
       "datasource": {
@@ -355,37 +401,55 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "sum by (cluster, status) (rate(csi_qumulo_api_requests_total{cluster=~\"$cluster\"}[5m]))",
           "legendFormat": "{{cluster}} {{status}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 10,
-      "type": "timeseries",
+      "type": "graph",
       "title": "API errors and transport failures",
       "description": "Everything that is not a 2xx, which is the series to watch when PVCs stop binding.",
       "datasource": {
@@ -404,37 +468,55 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "sum by (cluster, status, path_template) (rate(csi_qumulo_api_requests_total{cluster=~\"$cluster\",status!~\"2..\"}[5m]))",
           "legendFormat": "{{cluster}} {{status}} {{path_template}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 11,
-      "type": "timeseries",
+      "type": "graph",
       "title": "API latency p99 by endpoint",
       "description": "Labelled by path template, never by a formatted path: one series per volume would be a cardinality bomb.",
       "datasource": {
@@ -453,33 +535,51 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, cluster, path_template) (rate(csi_qumulo_api_duration_seconds_bucket{cluster=~\"$cluster\"}[5m])))",
           "legendFormat": "{{cluster}} {{path_template}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 12,
@@ -496,7 +596,7 @@
     },
     {
       "id": 13,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Array free space",
       "description": "From GetCapacity. Cluster-wide, not per class: a Qumulo directory quota is a logical limit with no pool of space behind it. Updates only when csi-provisioner polls GetCapacity, which needs sidecars.capacity.enabled.",
       "datasource": {
@@ -515,50 +615,64 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "csi_qumulo_cluster_free_bytes{cluster=~\"$cluster\"}",
           "legendFormat": "free {{cluster}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "csi_qumulo_cluster_capacity_bytes{cluster=~\"$cluster\"}",
           "legendFormat": "total {{cluster}}",
-          "range": true,
-          "instant": false,
-          "refId": "B",
-          "format": "time_series"
+          "refId": "B"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "bytes",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 14,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Volumes nearest their quota",
       "description": "Used over limit, from the array's own view of the directory quota -- not kubelet's view of the mount. As fresh as the last controller RPC that read that volume's quota, and absent entirely for a volume nothing has asked about since the controller started. Turn on controller.inventory.enabled and ListVolumes populates them all at once.",
       "datasource": {
@@ -577,33 +691,51 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "topk(10, csi_qumulo_volume_used_bytes / csi_qumulo_volume_quota_bytes)",
           "legendFormat": "{{volume_name}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "percentunit",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 15,
@@ -620,9 +752,9 @@
     },
     {
       "id": 16,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Recovery-point age (how much a failover would lose)",
-      "description": "THE replication health signal. Measured on the array's own clock, computed at scrape time. Alert on this and not on state: a target array reported ESTABLISHED with no error for 25 minutes while its source was dead (KB-31). A relationship that has never completed a job has no series here at all -- zero would be the most dangerous possible lie.",
+      "description": "THE replication health signal. Measured on the array's own clock, computed at scrape time. Alert on this and not on state: a target array reported ESTABLISHED with no error for 25 minutes while its source was dead. A relationship that has never completed a job has no series here at all -- zero would be the most dangerous possible lie.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -639,33 +771,51 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "csi_qumulo_replication_recovery_point_age_seconds",
           "legendFormat": "{{relationship_id}} ({{role}})",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 17,
@@ -719,7 +869,7 @@
     },
     {
       "id": 18,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Snapshots queued to replicate",
       "description": "A number that climbs and does not fall is a source that cannot keep up.",
       "datasource": {
@@ -738,38 +888,57 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "csi_qumulo_replication_queued_snapshots",
           "legendFormat": "{{relationship_id}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 22,
       "type": "table",
       "title": "Volumes without protection",
-      "description": "Volumes the driver looked for a replication relationship on and found none (csi_qumulo_volume_replication_protected == 0), the QumuloCSIVolumeUnprotected condition. Trust this over the VolumeReplication object. Set only by GetVolumeReplicationInfo: a volume whose VolumeReplication was deleted keeps its last reading. See the Metrics reference.",
+      "description": "Volumes the driver looked for a replication relationship on and found none (csi_qumulo_volume_replication_protected == 0), the QumuloCSIVolumeUnprotected condition. Trust this over the VolumeReplication object. Set only by GetVolumeReplicationInfo: a volume whose VolumeReplication was deleted keeps its last reading. See docs/reference/metrics.md.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -830,7 +999,7 @@
     },
     {
       "id": 20,
-      "type": "timeseries",
+      "type": "graph",
       "title": "Sidecar operation latency p99",
       "description": "csi_sidecar_operations_seconds: how long the SIDECAR waited, its own retries included. Scraped because metrics.enabled gives provisioner, resizer and snapshotter --http-endpoint.",
       "datasource": {
@@ -849,46 +1018,64 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, method_name, driver_name) (rate(csi_sidecar_operations_seconds_bucket[5m])))",
           "legendFormat": "{{driver_name}} {{method_name}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     },
     {
       "id": 21,
-      "type": "timeseries",
-      "title": "Driver memory and goroutines",
-      "description": "The first question after a controller restart.",
+      "type": "graph",
+      "title": "Driver memory (RSS)",
+      "description": "Resident memory of each driver container (controller and node), the first question after a restart. Only containers that export csi_qumulo_build_info are shown, not every process in the cluster.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 6,
         "x": 12,
         "y": 47
       },
@@ -898,45 +1085,118 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
-          "expr": "process_resident_memory_bytes",
-          "legendFormat": "rss {{instance}}",
-          "range": true,
-          "instant": false,
-          "refId": "A",
-          "format": "time_series"
+          "expr": "process_resident_memory_bytes and on (job, instance) csi_qumulo_build_info",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "bytes",
+          "show": true,
+          "logBase": 1,
+          "min": 0
         },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 23,
+      "type": "graph",
+      "title": "Driver goroutines",
+      "description": "Goroutines in each driver container. A count that only grows points at a leak. Only containers that export csi_qumulo_build_info are shown.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 47
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "editorMode": "code",
-          "expr": "go_goroutines",
-          "legendFormat": "goroutines {{instance}}",
-          "range": true,
-          "instant": false,
-          "refId": "B",
-          "format": "time_series"
+          "expr": "go_goroutines and on (job, instance) csi_qumulo_build_info",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
       },
-      "options": {}
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
     }
   ],
   "refresh": "1m",

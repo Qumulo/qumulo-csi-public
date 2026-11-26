@@ -1,0 +1,14 @@
+{{- if include "qumulo-csi-driver.trustedCABundle" . }}
+# Filled by OpenShift's Cluster Network Operator with the cluster's trusted CA
+# bundle (system CAs plus the Proxy's trustedCA) under ca-bundle.crt. Rendered
+# with no data on purpose: Helm then never overwrites what OpenShift injects.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qumulo-csi-driver.fullname" . }}-trusted-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+    config.openshift.io/inject-trusted-cabundle: "true"
+{{- end }}

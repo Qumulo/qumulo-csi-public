@@ -1,0 +1,7 @@
+# Local config, tokens, build output and raw run data stay out of git: run data carries real array addresses.
+# The durable record is the published report under docs/.
+resource-report.env
+bin/
+runs/
+*.token
+__pycache__/

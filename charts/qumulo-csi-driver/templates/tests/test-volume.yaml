@@ -1,0 +1,128 @@
+{{- /*
+`helm test`, opt-in (tests.storageClass): provisions a volume, mounts it in a non-root pod, writes a file,
+reads it back and removes it -- the controller (CreateVolume), the node plugin
+(NodePublishVolume) and the array's export all have to work for it to pass.
+chart-verifier's contains-test check requires the chart to carry a test.
+
+One Pod with a generic ephemeral volume, not a PVC hook plus a Pod hook. The
+claim is owned by the pod, so Kubernetes creates it with the pod and deletes
+it (and, under reclaimPolicy Delete, the volume) when the pod is deleted.
+A separate PVC hook did not work: Helm counts a PVC hook as succeeded the
+moment it exists, so hook-succeeded deleted the claim while the test pod was
+still using it, and after a failed run the claim sat in Terminating behind the
+failed pod -- the next run's before-hook-creation then waited on it until
+`helm test` timed out (OCP 4.22, 2026-11-04).
+
+hook-delete-policy: before-hook-creation,hook-succeeded. A pass deletes the
+pod and its claim. A failure keeps both for `kubectl logs` / `describe`, and
+the next `helm test` replaces them. Because a passing pod is deleted at once,
+`helm test --logs` cannot fetch its log and exits 1 on a pass; run it without.
+
+Read through dig, not .Values.tests.*: an upgrade with --reuse-values from a
+release made before this block existed carries no `tests` key at all, and a
+nil pointer would fail the render (as for openshift.*).
+
+Kubernetes expands $(NAME) and $$ in a container's command, so the script
+avoids both: $$ would arrive as a lone "$".
+*/ -}}
+{{- $v := .Values.AsMap -}}
+{{- /* Opt-in: only for a class named in tests.storageClass. It provisions a
+       real volume on an array, which `helm test` should not do unasked --
+       and a chart-verifier run would fail it on a cluster with no array. */ -}}
+{{- $sc := dig "tests" "storageClass" "" $v -}}
+{{- if $sc }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ printf "%s-test" $fullname | trunc 58 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- if include "qumulo-csi-driver.isOpenShift" . }}
+    {{- /* The controller's SCC: a cluster that admits the driver admits this pod. */}}
+    openshift.io/required-scc: {{ include "qumulo-csi-driver.testSCC" . | quote }}
+    {{- end }}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- /* The mount needs the node plugin on the same node, so this pod goes
+         only where the node DaemonSet runs: with node.nodeSelector set (a
+         storage-labelled pool), a pod placed anywhere else waits on
+         "driver name ... not found in the list of registered CSI drivers"
+         until helm test times out (OCP 4.22, 2026-11-06). */}}
+  {{- with dig "node" "nodeSelector" dict $v }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with dig "node" "tolerations" list $v }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with dig "node" "affinity" dict $v }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.image.pullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    {{- if not (include "qumulo-csi-driver.assignTestUID" .) }}
+    {{- /* Left out when the SCC assigns a uid from the namespace range: it refuses any other. */}}
+    runAsUser: 65532
+    runAsGroup: 65532
+    {{- end }}
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: write-read
+      image: {{ dig "tests" "image" "registry.access.redhat.com/ubi9/ubi-minimal:9.9@sha256:08d4c70f1baf6537a0728656cf7942d561e74a35916509d205b6519861266352" $v | quote }}
+      imagePullPolicy: {{ dig "tests" "imagePullPolicy" "IfNotPresent" $v }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          f="/data/helm-test-${RANDOM}${RANDOM}"
+          want="qumulo-csi helm test, release {{ .Release.Name }}, class {{ $sc }}"
+          printf '%s\n' "$want" > "$f"
+          sync
+          got="`cat "$f"`"
+          rm -f "$f"
+          if [ "$got" != "$want" ]; then
+            echo "FAIL: read back '$got', wrote '$want'"
+            exit 1
+          fi
+          echo "PASS: wrote, read back and removed a file on a {{ $sc }} volume as uid `id -u`"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: {cpu: 10m, memory: 64Mi, ephemeral-storage: 16Mi}
+        limits: {memory: 64Mi, ephemeral-storage: 64Mi}
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      ephemeral:
+        volumeClaimTemplate:
+          metadata:
+            labels:
+              {{- include "qumulo-csi-driver.labels" . | nindent 14 }}
+              app.kubernetes.io/component: test
+          spec:
+            accessModes: [ReadWriteMany]
+            storageClassName: {{ $sc | quote }}
+            resources:
+              requests:
+                storage: {{ dig "tests" "size" "1Gi" $v | quote }}
+{{- end }}

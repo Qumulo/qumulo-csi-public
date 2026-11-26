@@ -38,6 +38,8 @@ metrics:
     enabled: true
   prometheusRule:
     enabled: true
+  dashboard:
+    enabled: true
 ```
 
 This gives the driver a `/metrics` endpoint in both pods, gives the CSI
@@ -184,10 +186,40 @@ kubectl -n qumulo-csi get --raw \
 
 ## Dashboard
 
-A starter Grafana dashboard ships with these docs:
-[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json). Import it
-and pick a Prometheus datasource; it has a `datasource` variable and needs no
-editing.
+The chart ships a Grafana dashboard, `dashboards/qumulo-csi.json`; a copy is
+[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json).
+`metrics.dashboard.enabled: true` renders it as a ConfigMap labelled
+`grafana_dashboard: "1"`, which the Grafana sidecar in kube-prometheus-stack
+imports on its own. For the OpenShift console (Observe > Dashboards) set
+`metrics.dashboard.namespace: openshift-config-managed` and
+`metrics.dashboard.labels: {console.openshift.io/dashboard: "true"}`. For any
+other Grafana, import the JSON by hand and pick a Prometheus datasource; it has
+a `datasource` variable and needs no editing.
+
+Six rows, in the order an operator asks the questions:
+
+1. **Is anything broken right now** — array reachability, failing RPCs, build.
+2. **CSI RPCs** — rate and latency by method.
+3. **Qumulo REST API** — "is the array slow, or is Kubernetes slow".
+4. **Capacity and quotas** — array free space, and the ten volumes nearest
+   their quota.
+5. **Replication** — recovery-point age (the RPO), and volumes with no
+   relationship.
+6. **Sidecars and process** — sidecar latency, driver memory and goroutines
+   (only the driver's own containers, not every process the cluster scrapes).
+
+The panels are the legacy `graph`, `singlestat` and `table` types, because
+the OpenShift console draws only those (and `gauge` and pie charts): it skips
+Grafana's `timeseries` and `stat` panels without an error. Grafana converts
+`graph` to `timeseries` and `singlestat` to `stat` when it loads the
+dashboard, so the same JSON serves both. **Arrays reachable** therefore shows
+one value, the lowest over the selected arrays; **API calls by status** shows
+which array is failing.
+
+The replication row stays empty without `sidecars.csiAddons.enabled`, and the
+array free-space panel without `sidecars.capacity.enabled`: nothing calls
+`GetCapacity` otherwise. Array-side panels show the last value a request
+produced, not a sample.
 
 ## Health checks
 

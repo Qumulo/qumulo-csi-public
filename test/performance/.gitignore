@@ -1,0 +1,4 @@
+# Run results carry array addresses; local config holds token paths.
+runs/
+performance.env
+__pycache__/

@@ -1,0 +1,22 @@
+# For a cluster where SecurityContextConstraints are centrally governed and a
+# Helm chart is not permitted to create one.
+#
+# Layer it over openshift-values.yaml:
+#   helm install ... -f openshift-values.yaml -f openshift-values-admin-scc.yaml
+#
+# The chart then renders no SCC and no grant, and pins the node pods to the
+# named SCC with the openshift.io/required-scc annotation. The administrator
+# owns creating that SCC and granting it to the node ServiceAccount; the suite
+# asserts the chart stops short of doing either, and prints the SCC the admin
+# has to supply.
+#
+# The SCC they create must allow what the chart's own does: privileged,
+# hostNetwork, hostPorts, hostPath, RunAsAny, the runtime/default seccomp
+# profile, and the emptyDir/hostPath/projected volume types. Nothing more --
+# the chart's rendered SCC is the reference, and `make openshift-test-verbose`
+# prints it.
+
+openshift:
+  nodeSCC:
+    create: false
+    name: corp-csi-node

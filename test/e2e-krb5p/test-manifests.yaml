@@ -1,0 +1,132 @@
+# NFSv4.1 Kerberos (sec=krb5p) end-to-end workload.
+#
+# Applied by run-test.sh after the Helm release is up. Placeholders marked
+# __LIKE_THIS__ are substituted by that script from the environment.
+#
+# THREE THINGS THAT LOOK LIKE OMISSIONS AND ARE NOT
+#
+# 1. There is no `clusterID` parameter. This driver routes on `server`, set per
+#    class, with the credential arriving through the csi.storage.k8s.io/* secret
+#    keys. There is no cluster-wide fallback address, no cluster map, and no
+#    chart-managed token: a class naming no server is refused at install.
+#
+# 2. `mountOptions` does NOT contain `vers=4.1`. The chart refuses `protocol`
+#    and a `vers=`/`nfsvers=` option together, because two places pinning the
+#    version can disagree and the mount silently follows one of them. `protocol`
+#    is the one that also drives the controller's preflight against the cluster,
+#    so it is the one to keep.
+#
+# 3. `mountOptions` does NOT contain `sec=krb5p` either. `securityFlavor` is
+#    what to set, and it does strictly more: the controller makes the *export*
+#    require krb5p, and the node adds the matching `sec=` option. A bare
+#    `sec=krb5p` in mountOptions gives you only the second half -- the export
+#    would still require nothing, and NFSv4.1 would negotiate quietly back down
+#    to sec=sys. You would believe traffic was encrypted when it was not.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-krb5p-test-sc
+provisioner: csi.qumulo.com
+parameters:
+  # Routing: this driver keeps no fallback cluster, so `server` is mandatory.
+  #
+  # Note there is no `secretName` parameter here. That is a *chart* value; the
+  # chart renders it into the csi.storage.k8s.io/*-secret-name keys below, which
+  # is what the sidecars actually read. Setting `secretName` as a StorageClass
+  # parameter is rejected by the driver, which refuses unknown keys rather than
+  # dropping them -- a class asking for something that will not happen should
+  # fail, not provision quietly without it.
+  server: __QUMULO_SERVER__
+
+  storeRealPath: __BASE_PATH__
+  storeExportPath: __EXPORT_BASE_PATH__
+
+  protocol: nfs4.1
+
+  # Kerberos with privacy: authentication, integrity and on-the-wire encryption.
+  # Requires dedicated-export below -- a shared export belongs to an
+  # administrator, and changing its authentication would affect every other
+  # volume beneath it.
+  securityFlavor: krb5p
+  provisioningModel: dedicated-export
+
+  # Delivered to the sidecars per RPC; this is the only credential path.
+  csi.storage.k8s.io/provisioner-secret-name: __QUMULO_SECRET__
+  csi.storage.k8s.io/provisioner-secret-namespace: __NAMESPACE__
+  csi.storage.k8s.io/controller-expand-secret-name: __QUMULO_SECRET__
+  csi.storage.k8s.io/controller-expand-secret-namespace: __NAMESPACE__
+
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+# An NFS export is reachable identically from every node, so there is no
+# topology for the scheduler to resolve.
+volumeBindingMode: Immediate
+mountOptions:
+  # hard: retry indefinitely rather than returning EIO to the application. On a
+  # Kerberos mount this also rides out a KDC blip instead of failing writes.
+  - hard
+  - timeo=600
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qumulo-krb5p-pvc
+  namespace: __NAMESPACE__
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: qumulo-krb5p-test-sc
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: qumulo-secure-app
+  namespace: __NAMESPACE__
+  labels:
+    app: qumulo-secure-app
+spec:
+  # The test asserts on a running pod, so a crash must surface as a failure
+  # rather than as a restart loop that eventually looks healthy.
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: alpine:3.20
+      # Write a timestamped line every second, and keep the newest file's name
+      # predictable so the verifier does not have to guess it.
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          echo "writing to /data as uid=$(id -u) gid=$(id -g)"
+          i=0
+          while true; do
+            i=$((i + 1))
+            printf '%s seq=%d host=%s\n' "$(date -Iseconds)" "$i" "$(hostname)" \
+              >> /data/krb5p-timestamps.log
+            # A per-iteration file too: proves create, not just append.
+            printf '%s\n' "$(date -Iseconds)" > "/data/stamp-$((i % 10)).txt"
+            sync
+            sleep 1
+          done
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: qumulo-krb5p-pvc

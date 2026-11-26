@@ -1,0 +1,138 @@
+# Performance validation: what runs, the limits each result is shown against, and the baseline it is compared
+# with. Read by scripts/perf.py. Every scenario runs the driver binary built from this checkout as separate
+# controller and node processes (test/resource-report/scripts/driver_footprint.py) and drives the CSI sockets with
+# test/resource-report/csiload, as the sidecars and kubelet would. No Kubernetes is involved.
+#
+# Scenario fields
+#   group     which report section it belongs to (latency, baseline, scaling, addresses, isolation, mounts)
+#   runs      list of {array, model, n, concurrency, expand, snapshots, publish, hold}; runs in one scenario go at
+#             the same time. `publish` is dropped on arrays missing from NODE_ARRAYS (A cannot serve mounts here).
+#   baseline  name of the scenario in the baseline below to compare with, when it is the same load
+#   quick     false: skipped by --quick
+# Sizes are the full run. --quick scales n/expand/snapshots/publish by `quick_scale`, never below 2.
+
+quick_scale: 0.25
+idle: 10s            # csiload's gap between phases, so each phase's samples are its own
+
+scenarios:
+  # ---- 1. Unloaded latency: one RPC at a time, the floor every other number sits on
+  - {name: A-serial, group: latency, runs: [{array: A, model: shared, n: 10, concurrency: 1, expand: 10, snapshots: 10}]}
+  - {name: B-serial, group: latency, runs: [{array: B, model: shared, n: 10, concurrency: 1, expand: 10, snapshots: 10, publish: 10, hold: 5s}]}
+  - {name: A-serial-dedicated, group: latency, runs: [{array: A, model: dedicated, n: 10, concurrency: 1}]}
+  - {name: B-serial-dedicated, group: latency, runs: [{array: B, model: dedicated, n: 10, concurrency: 1, publish: 5, hold: 5s}]}
+
+  # ---- 2. The resource report's own loads, so every number has a baseline counterpart
+  - {name: A-shared, group: baseline, baseline: A-shared, runs: [{array: A, model: shared, n: 50, concurrency: 8, expand: 10, snapshots: 10}]}
+  - {name: B-shared, group: baseline, baseline: B-shared, runs: [{array: B, model: shared, n: 50, concurrency: 8, expand: 10, snapshots: 10, publish: 10, hold: 10s}]}
+  - {name: A-dedicated, group: baseline, baseline: A-dedicated, runs: [{array: A, model: dedicated, n: 20, concurrency: 4}]}
+  - {name: B-dedicated, group: baseline, baseline: B-dedicated, runs: [{array: B, model: dedicated, n: 20, concurrency: 4, publish: 5, hold: 10s}]}
+  - {name: A-burst200, group: baseline, baseline: A-burst200, runs: [{array: A, model: shared, n: 200, concurrency: 16}]}
+  - {name: B-burst200, group: baseline, baseline: B-burst200, runs: [{array: B, model: shared, n: 200, concurrency: 16}]}
+
+  # ---- 3. Throughput against concurrency: where adding parallel RPCs stops paying
+  - {name: B-sweep-c1,  group: scaling, runs: [{array: B, model: shared, n: 48, concurrency: 1}]}
+  - {name: B-sweep-c4,  group: scaling, runs: [{array: B, model: shared, n: 48, concurrency: 4}]}
+  - {name: B-sweep-c16, group: scaling, runs: [{array: B, model: shared, n: 48, concurrency: 16}]}
+  - {name: B-sweep-c32, group: scaling, runs: [{array: B, model: shared, n: 48, concurrency: 32}]}
+  - {name: A-sweep-c1,  group: scaling, quick: false, runs: [{array: A, model: shared, n: 48, concurrency: 1}]}
+  - {name: A-sweep-c16, group: scaling, quick: false, runs: [{array: A, model: shared, n: 48, concurrency: 16}]}
+  - {name: A-sweep-c32, group: scaling, quick: false, runs: [{array: A, model: shared, n: 48, concurrency: 32}]}
+
+  # ---- 4. One cluster through three of its node addresses at once (B, C, D are all cluster-b), against B alone
+  - {name: BCD-addresses, group: addresses, runs: [{array: B, model: shared, n: 50, concurrency: 8},
+                                                  {array: C, model: shared, n: 50, concurrency: 8},
+                                                  {array: D, model: shared, n: 50, concurrency: 8}]}
+
+  # ---- 5. Two clusters from one controller at once (stateless multi-cluster): does one slow the other?
+  - {name: AB-concurrent-shared, group: isolation, baseline: AB-concurrent-shared,
+     runs: [{array: A, model: shared, n: 50, concurrency: 8}, {array: B, model: shared, n: 50, concurrency: 8}]}
+
+  # ---- 6. Mount density on one node: 100 live NFS 4.1 mounts held together
+  - {name: B-mounts100, group: mounts, runs: [{array: B, model: shared, n: 100, concurrency: 16, publish: 100, hold: 30s}]}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Limits. The report prints each one next to the value the run measured for it, where, and the basis below. It
+# computes no verdict: reading the numbers against the limits is left to the reader.
+thresholds:
+  # Every RPC must end OK. Aborted is CSI's "call again" and csiload retries it like a sidecar; the count is reported.
+  - {id: T-01, metric: error_rate, op: "*", limit: 0,
+     why: "a non-OK final answer is a failed PVC, snapshot or mount"}
+  # The sidecars give up on a call after their --timeout (chart: provisioner, resizer, snapshotter 60s). A call
+  # running longer is cancelled and retried, so its work is wasted and the user waits at least twice as long.
+  - {id: T-02, metric: latency_max_ms, op: "*", limit: 60000,
+     why: "sidecar --timeout is 60s (charts/qumulo-csi-driver/values.yaml sidecars.*.timeout)"}
+  # Service levels per call at the 95th percentile. Set at roughly 2x the slowest p95 the baseline measured
+  # for that call, rounded up, so array noise passes and a real slowdown does not.
+  # max_cluster_inflight: the baseline never put more than 16 calls in flight on one cluster, so a limit derived from
+  # it is applied only up to there. Past it the cluster saturates (about 9-11 creates/s) and latency grows with the
+  # queue, latency ~ calls in flight / the cluster's rate; those rows are reported as measured saturation.
+  # Counted per cluster across its node addresses: BCD-addresses (3 x 8 into cluster-b) is 24.
+  - {id: T-03, metric: latency_p95_ms, op: CreateVolume, max_cluster_inflight: 16, limit: 4000, why: "baseline worst p95 1,868 ms (B-burst200)"}
+  - {id: T-04, metric: latency_p95_ms, op: DeleteVolume, max_cluster_inflight: 16, limit: 15000, why: "baseline worst p95 6,456 ms (A-burst200). One call waits at most the 10 s tree-delete budget (pkg/driver/controller_server.go defaultTreeDeleteBudget), then answers Aborted; the figure includes csiload's retries, i.e. the time until the CO sees OK"}
+  - {id: T-05, metric: latency_p95_ms, op: ControllerExpandVolume, limit: 1500, why: "baseline worst p95 552 ms"}
+  - {id: T-06, metric: latency_p95_ms, op: CreateSnapshot,         limit: 9000, why: "baseline worst p95 4,340 ms (B)"}
+  - {id: T-07, metric: latency_p95_ms, op: DeleteSnapshot,         limit: 1500, why: "baseline worst p95 448 ms"}
+  - {id: T-08, metric: latency_p95_ms, op: NodePublishVolume, max_concurrency: 8, limit: 3000,
+     why: "baseline worst p95 1,388 ms, all measured at <= 8 parallel mounts; seconds per mount are a slow pod start"}
+  # Parallel mounts on one node queue below the driver (kernel NFS client / mount.nfs; one TCP connection per node
+  # per address): measured at 16-way, latency grows ~0.2 s per mount in flight. Bounded well inside
+  # the driver's 90 s mount timeout; set after that first measurement, not from the baseline.
+  - {id: T-08b, metric: latency_p95_ms, op: NodePublishVolume, min_concurrency: 16, limit: 10000,
+     why: "16 pods starting on one node at once; 10 s is 1/9 of the 90 s mount timeout (pkg/driver/node_server.go)"}
+  - {id: T-09, metric: latency_p95_ms, op: NodeGetVolumeStats,     limit: 500, why: "baseline worst p95 98 ms; kubelet calls it per volume per sync period"}
+  - {id: T-10, metric: latency_p95_ms, op: NodeUnpublishVolume,    limit: 1000, why: "baseline worst p95 80 ms"}
+  # Throughput floors at the concurrency the chart's provisioner can reach. csi-provisioner v5 runs 100 workers
+  # by default, so 16 parallel creates is well inside what a real deployment sends.
+  - {id: T-11, metric: rps_min, op: CreateVolume, min_concurrency: 16, limit: 6.0,
+     why: "baseline 12.7-12.8 creates/s at concurrency 16; half of that is the floor"}
+  - {id: T-12, metric: rps_min, op: DeleteVolume, min_concurrency: 16, limit: 2.0,
+     why: "baseline 4.3-5.2 deletes/s at concurrency 16"}
+  # REST calls the driver makes per CSI call, from its own csi_qumulo_api_requests_total.
+  - {id: T-13, metric: rest_per_rpc_max, op: CreateVolume, model: shared,    limit: 5.0, why: "baseline 4.0-4.2"}
+  - {id: T-14, metric: rest_per_rpc_max, op: CreateVolume, model: dedicated, limit: 7.5, why: "baseline 6.2"}
+  - {id: T-15, metric: rest_per_rpc_max, op: DeleteVolume, burst: false, max_cluster_inflight: 16, limit: 15.0, why: "baseline 10.0-11.1; includes tree-delete polling"}
+  - {id: T-16, metric: rest_per_rpc_max, op: DeleteVolume, burst: true,      limit: 20.0, why: "baseline 11.6-12.1; polling grows with a slow tree delete"}
+  # Driver footprint under load against the chart (controller has no requests; node driver requests 64Mi).
+  - {id: T-17, metric: rss_mb_peak, role: controller, limit: 64, why: "baseline peak 41.8 MB"}
+  - {id: T-18, metric: rss_mb_peak, role: node,       limit: 64, why: "node driver container requests 64Mi; baseline 35.7 MB"}
+  # Regression signals against the baseline and the expected shape.
+  - {id: T-19, metric: p95_vs_baseline, op: "*", limit: 1.5,
+     why: "p95 more than 1.5x the baseline figure for the same load on the same array"}
+  - {id: T-20, metric: rps_vs_baseline, op: "*", limit: 0.67,
+     why: "throughput below 2/3 of the baseline figure for the same load on the same array"}
+  - {id: T-21, metric: scaling, op: CreateVolume, limit: 2.0,
+     why: "creates/s at concurrency 16 should be at least 2x concurrency 1 on the same array; less means a serialization point"}
+  - {id: T-22, metric: isolation, op: CreateVolume, limit: 1.5,
+     why: "B's create p95 with A loaded at the same time within 1.5x of B alone (B-shared)"}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Baseline: an earlier resource-report run of an earlier build, same arrays A and B.
+# Per scenario, array, call: [calls, RPC/s, REST/RPC, p50 ms, p95 ms, max ms].
+baseline:
+  build: an earlier build
+  run: an earlier baseline run
+  source: that run's resource report, "Cost per operation"
+  results:
+    A-shared:
+      A: {CreateVolume: [50, 10.3, 4.2, 716.4, 1191.2, 1214.1], ControllerExpandVolume: [10, 18.8, 6.0, 327.0, 466.1, 466.1],
+          CreateSnapshot: [10, 4.0, 5.0, 1386.6, 1948.1, 1948.1], DeleteSnapshot: [10, 26.8, 2.0, 207.5, 275.9, 275.9],
+          DeleteVolume: [50, 3.9, 10.8, 1945.9, 3314.4, 3973.6]}
+    B-shared:
+      B: {CreateVolume: [50, 7.8, 4.2, 936.3, 1493.1, 1853.2], ControllerExpandVolume: [10, 17.1, 6.0, 438.9, 551.5, 551.5],
+          CreateSnapshot: [10, 1.8, 5.0, 3174.1, 4340.2, 4340.2], DeleteSnapshot: [10, 20.0, 2.0, 310.3, 447.5, 447.5],
+          NodePublishVolume: [10, 7.4, 0.0, 1019.0, 1175.3, 1175.3], NodeGetVolumeStats: [10, 84.3, 0.0, 87.4, 97.8, 97.8],
+          NodeUnpublishVolume: [10, 124.7, 0.0, 39.5, 79.9, 79.9], DeleteVolume: [50, 4.8, 10.4, 1548.2, 2533.4, 3330.3]}
+    A-dedicated:
+      A: {CreateVolume: [20, 8.5, 6.2, 360.6, 910.5, 951.3], DeleteVolume: [20, 4.1, 10.8, 880.3, 1100.3, 1423.9]}
+    B-dedicated:
+      B: {CreateVolume: [20, 8.7, 6.2, 362.9, 914.6, 951.4], NodePublishVolume: [5, 2.5, 0.0, 1240.9, 1387.8, 1387.8],
+          NodeGetVolumeStats: [5, 75.1, 0.0, 44.0, 48.6, 48.6], NodeUnpublishVolume: [5, 71.4, 0.0, 28.0, 46.2, 46.2],
+          DeleteVolume: [20, 3.1, 11.1, 1057.4, 2412.4, 2527.7]}
+    AB-concurrent-shared:
+      A: {CreateVolume: [50, 11.2, 4.1, 572.5, 1096.0, 1142.4], DeleteVolume: [50, 5.2, 10.3, 1459.5, 2138.5, 2474.5]}
+      B: {CreateVolume: [50, 13.3, 4.1, 583.5, 763.5, 769.3], DeleteVolume: [50, 5.7, 10.0, 1206.9, 1833.4, 2382.9]}
+    A-burst200:
+      A: {CreateVolume: [200, 12.8, 4.0, 1216.9, 1461.4, 1638.0], DeleteVolume: [200, 4.3, 12.1, 3490.5, 6456.4, 7540.4]}
+    B-burst200:
+      B: {CreateVolume: [200, 12.7, 4.1, 1164.0, 1868.5, 2073.0], DeleteVolume: [200, 5.2, 11.6, 2747.9, 5191.9, 8003.3]}
+  footprint: {controller_rss_mb_peak: 41.8, node_rss_mb_peak: 35.7}

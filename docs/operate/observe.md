@@ -111,13 +111,24 @@ sidecars:
 
 `ListVolumes` enumerates the volumes this driver provisioned, per cluster, for
 reconciliation and audit. The health-monitor sidecar polls
-`ControllerGetVolumeHealth`.
+`ControllerGetVolumeHealth`. It needs `controller.inventory.enabled` — it sends
+no Secret of its own, so it can only reach an array the inventory knows about,
+and the chart refuses one setting without the other.
 
-!!! warning "Volume health reaches the claim only from Kubernetes 1.37"
-    The RPCs are implemented per CSI v1.13 (`GET_VOLUME_HEALTH`), and the
-    health monitor records results in `pvc.status.healthStatus` — which needs
-    Kubernetes 1.37 with the `CSIVolumeHealth` gate. On 1.35 and 1.36 nothing
-    is recorded, and no kubelet calls the node RPC.
+!!! warning "Volume health does not reach the claim on any supported version"
+    The driver implements the health RPCs per CSI v1.13 (`GET_VOLUME_HEALTH`),
+    and the health monitor records what it reads in `pvc.status.healthStatus`.
+    **That field is alpha.** It was added in Kubernetes 1.37, it is off unless
+    the API server runs with the `CSIVolumeHealth` feature gate, and it does
+    not exist on 1.35 or 1.36. OpenShift 4.22 is Kubernetes 1.35, and enabling
+    an alpha feature there needs the `TechPreviewNoUpgrade` feature set, which
+    cannot be undone and blocks cluster upgrades.
+
+    So on every version this release supports, turning the monitor on costs a
+    few Qumulo REST reads per volume per `monitorInterval` and puts nothing on
+    the claim. Leave `sidecars.healthMonitor.enabled` at `false` unless you are
+    testing against Kubernetes 1.37. `NodeGetVolumeHealth` is implemented too,
+    but no 1.35 or 1.36 kubelet calls it.
 
 !!! note "Inventory is not a complete picture"
     A DR copy's PV is not listed by the walk, a directory with no quota is

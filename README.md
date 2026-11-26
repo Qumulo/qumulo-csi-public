@@ -1,15 +1,21 @@
-# Qumulo CSI Driver
+# Qumulo CSI Driver for Kubernetes
 
-Provision Kubernetes persistent volumes on Qumulo storage over NFS. Each volume
-is a directory with an enforced quota, and one release serves any number of
-Qumulo clusters.
+![build status](https://github.com/Qumulo/qumulo-csi-public/actions/workflows/ci.yml/badge.svg)
 
-Supported on Kubernetes 1.35 and later, and on OpenShift 4.22.
+## About
+
+This driver allows Kubernetes to provision persistent volumes on
+[Qumulo](https://qumulo.com) storage over NFS. It requires an existing Qumulo
+cluster with a directory that is already NFS-exported; each volume is created as
+a subdirectory beneath it, or as its own NFS export.
+
+- **CSI plugin name:** `csi.qumulo.com`
+- **Project status:** 0.1.1
+- **License:** [Qumulo CSI Driver License](LICENSE)
 
 ## Documentation
 
-This repository holds the driver's documentation. The rendered site is the
-best way to read it:
+The rendered documentation site is the best way to read the docs:
 
 **<https://qumulo.github.io/qumulo-csi-public/>**
 
@@ -21,33 +27,68 @@ best way to read it:
 | Settings | [StorageClass parameters](docs/reference/storageclass-parameters.md), [Chart values](docs/reference/chart-values.md) |
 | Something is wrong | [Troubleshoot Guide](docs/operate/troubleshoot-mounts.md), [FAQ](docs/reference/faq.md) |
 
-## What is published
+## Container Images & Kubernetes Compatibility
 
-The chart and both images are published as packages on this repository:
+| Driver Version | Supported K8s Version | Supported OpenShift | CSI Spec | Status |
+|---|---|---|---|---|
+| 0.1.1 | 1.35+ | OCP 4.22 (RHCOS 9.8) | v1.13.0 | Patch release |
+| 0.1.0 | 1.35+ | OCP 4.22 (RHCOS 9.8) | v1.13.0 | Initial release |
 
-| | |
-|---|---|
-| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` |
-| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` |
-| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` |
+| Image | Tag | Platforms |
+|---|---|---|
+| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.1` | `linux/amd64`, `linux/arm64` |
 
-Pass `--version` on every install: every 0.1.0 build carries the same release
-number, so Helm cannot tell which is newest on its own. See
-[Install the driver](docs/get-started/install.md) for the exact command.
+The images are visible to members of the Qumulo GitHub organization only;
+pulling them needs a pull secret, set up in
+[step 2 of the installation guide](docs/get-started/install.md#2-get-access-to-the-images).
 
-## Contributing
+## Driver Parameters
 
-This repository is a publishing target. The documentation is written in
-Qumulo's development repository and copied here, so a change made on this
-repository alone is overwritten by the next update. Please open an issue
-describing what is wrong or missing rather than a pull request.
+Please refer to [`csi.qumulo.com` StorageClass parameters](docs/reference/storageclass-parameters.md).
 
-## Support
+## Installation
 
-Open a case at [care.qumulo.com](https://care.qumulo.com).
+Install the driver on a Kubernetes cluster:
 
-## License
+OpenShift uses the same chart and the same `helm install`; the chart renders
+its own least-privilege SecurityContextConstraint for the node plugin, so
+there is no SCC step. See [Install on OpenShift](docs/get-started/openshift.md)
+and [Operate on OpenShift](docs/operate/openshift-operations.md).
 
-See [LICENSE](LICENSE). The driver is not open-source software; the license
-grants use with Qumulo storage and does not permit redistribution or
-derivative works.
+<!--- Install by [Helm chart](charts/qumulo-csi-driver/README.md)
+-->
+- [Install](deploy/example/README.md) — a hands-on walkthrough
+<!--## Examples
+
+- [Installation guide](docs/get-started/install.md) — the crisp,
+  step-by-step path: requirements, the API token, your values file, TLS,
+  install, verify and upgrade
+- [Basic usage](deploy/example/README.md) — a hands-on walkthrough, one file
+  per step
+- [Use cases](deploy/use-cases/USE-CASES.md) — runnable manifests, one folder
+  per case:
+  [shared storage](deploy/use-cases/01-shared-storage/01-shared-storage.md) ·
+  [StatefulSet](deploy/use-cases/02-statefulset/02-statefulset.md) ·
+  [volume expansion](deploy/use-cases/03-expand-volume/03-expand-volume.md) ·
+  [snapshot and restore](deploy/use-cases/04-snapshot-restore/04-snapshot-restore.md) ·
+  [team separation](deploy/use-cases/05-team-separation/05-team-separation.md)
+-->
+## Troubleshooting
+
+- [Troubleshoot provisioning](docs/provision/troubleshoot.md) and
+  [troubleshoot mounts](docs/operate/troubleshoot-mounts.md)
+- [Supported features and known limits](docs/reference/supported-features.md) —
+  what is supported, and the limits you can hit in a supported configuration
+
+## Community, Discussion, Contribution, and Support
+
+- Report a bug or request a feature:
+  [GitHub issues](https://github.com/Qumulo/qumulo-csi-public/issues)
+- Qumulo support: [care.qumulo.com](https://care.qumulo.com)
+
+## Links
+
+- [Kubernetes CSI Documentation](https://kubernetes-csi.github.io/docs/)
+- [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
+- [Qumulo documentation](https://docs.qumulo.com)

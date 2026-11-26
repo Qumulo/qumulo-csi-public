@@ -1,0 +1,152 @@
+{{ include "qumulo-csi-driver.name" . }} {{ .Chart.AppVersion }} installed as release {{ .Release.Name }}.
+
+  controller  {{ include "qumulo-csi-driver.controllerImage" . }}
+  node        {{ include "qumulo-csi-driver.nodeImage" . }}
+  routing     per StorageClass (server + secretName); no fallback cluster
+{{- if .Values.qumulo.insecureSkipTlsVerify }}
+
+  WARNING: qumulo.insecureSkipTlsVerify is set. The cluster's TLS certificate
+  is not verified. Do not run this way in production.
+{{- end }}
+
+{{- $ns := .Release.Namespace }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . }}
+{{- if include "qumulo-csi-driver.isOpenShift" . }}
+
+OpenShift: no SCC step is needed.
+  controller pods  pinned to SCC {{ include "qumulo-csi-driver.controllerSCC" . }}
+  node pods        pinned to SCC {{ include "qumulo-csi-driver.nodeSCCName" . }}{{ if include "qumulo-csi-driver.createNodeSCC" . }} (made by this chart, granted to {{ $fullname }}-node only){{ else }} (made by your cluster admin: openshift.nodeSCC.create=false){{ end }}
+
+Check which SCC each pod got, and that the node account may use its SCC:
+
+  oc -n {{ $ns }} get pods -o custom-columns='NAME:.metadata.name,SCC:.metadata.annotations.openshift\.io/scc'
+  oc -n {{ $ns }} auth can-i use securitycontextconstraints/{{ include "qumulo-csi-driver.nodeSCCName" . }} --as=system:serviceaccount:{{ $ns }}:{{ $fullname }}-node
+{{- else if .Capabilities.APIVersions.Has "security.openshift.io/v1/SecurityContextConstraints" }}
+
+  WARNING: this cluster serves OpenShift SecurityContextConstraints, but
+  openshift.enabled is false. The node DaemonSet will create no pods. Set
+  openshift.enabled: auto (the default) or true.
+{{- end }}
+
+{{- if not (include "qumulo-csi-driver.createBindings" .) }}
+
+rbac.createBindings is false: this release made no RoleBinding or
+ClusterRoleBinding. It needs these, applied by your platform team:
+{{- range $b := (include "qumulo-csi-driver.bindingList" . | fromJsonArray) }}
+  {{ $b.kind }} {{ if $b.namespace }}{{ $b.namespace }}/{{ end }}{{ $b.name }} -> {{ $b.roleKind }} {{ $b.roleName }}, ServiceAccount {{ join ", " $b.subjects }}
+{{- end }}
+The exact YAML:
+  helm template {{ .Release.Name }} <chart> -n {{ $ns }} -f <your values> --set rbac.createBindings=true --show-only templates/rbac-bindings.yaml
+{{- end }}
+
+Check that both workloads are up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "qumulo-csi-driver.fullname" . }}-controller
+  kubectl -n {{ .Release.Namespace }} rollout status ds/{{ include "qumulo-csi-driver.fullname" . }}-node
+
+Ready means the driver process is live. It does NOT mean any Qumulo cluster is
+reachable, and it does not mean a token works -- neither the controller nor the
+node contacts a cluster to answer a Probe. One controller serves many clusters,
+chosen per StorageClass, so there is no single cluster to health-check and the
+driver is never told the full set.
+
+Per-cluster reachability and credential failures surface where you can act on
+them: as ProvisioningFailed events on the PVC that named the cluster.
+
+  kubectl describe pvc <name>
+
+That is deliberate rather than a gap. An earlier Probe did call the cluster,
+against an endpoint needing no authentication, and so reported healthy while
+every provision failed with 401 -- a controller that stayed Ready for 36
+minutes with a dead token.
+
+{{- range .Values.storageClasses }}
+{{- if and (eq (toString .provisioningModel) "dedicated-export") (not .allowedClients) (not (hasPrefix "krb5" (toString .securityFlavor))) }}
+
+  WARNING: StorageClass {{ .name }} sets no allowedClients. Every volume it
+  provisions gets an NFS export that any client able to reach the array can
+  mount -- as root, from any port, with no authentication.
+  {{- if .allowAnyClient }} allowAnyClient: true
+  says that is intended.{{ else }} Set allowedClients
+  to your nodes' addresses or CIDRs.{{ end }}
+{{- end }}
+{{- end }}
+
+{{- range .Values.storageClasses }}
+{{- $readOnly := false }}
+{{- range .mountOptions }}{{ range splitList "," (toString .) }}{{ if eq (trim .) "ro" }}{{ $readOnly = true }}{{ end }}{{ end }}{{ end }}
+{{- if $readOnly }}
+
+  NOTE: StorageClass {{ .name }} mounts read-only. The node refuses a mount the
+  kernel did not make read-only, but the pod's own bind of it may still read
+  rw: also set readOnly: true on the pods' volumeMounts. See "Read-only
+  volumes" in the chart README.
+{{- end }}
+{{- end }}
+
+{{ if .Values.storageClasses -}}
+StorageClasses created:
+{{- range .Values.storageClasses }}
+  {{ .name }}  ->  {{ .basePath }}{{ if .protocol }}  ({{ .protocol }}){{ end }}{{ if eq (.provisioningModel | default "") "dedicated-export" }}  [one NFS export per volume]{{ end }}
+{{- end }}
+{{ else -}}
+No StorageClasses were created. Add entries under storageClasses in your values
+to provision volumes -- basePath is cluster-specific, so the chart does not
+guess one.
+{{ end }}
+{{ if .Values.sidecars.snapshotter.enabled -}}
+Snapshots are ENABLED. csi-snapshotter is deployed, and volumes can be
+snapshotted and restored from a snapshot.
+
+  Requires the cluster-wide snapshot CRDs and snapshot-controller, which an
+  administrator installs once for all CSI drivers:
+
+    kubectl get crd | grep snapshot
+    kubectl get pods -A | grep snapshot-controller
+
+  A restore copies file by file, so it is bounded: past 50,000 entries
+  (files and directories) or 2 TiB it is refused. A large restore may take several provisioning attempts, during which
+  the PVC stays Pending -- raise sidecars.provisioner.timeout if that is slow.
+{{ else -}}
+Snapshots are NOT enabled. The driver implements the snapshot RPCs and can
+restore from a snapshot, but nothing calls them until you set
+sidecars.snapshotter.enabled and add a volumeSnapshotClasses entry -- and the
+cluster needs the snapshot CRDs first.
+{{ end -}}
+{{ if .Values.sidecars.csiAddons.enabled -}}
+Replication (csi-addons) is ENABLED (supported, opt-in). The csi-addons sidecar is
+deployed and the driver serves the replication RPCs. VolumeReplication objects
+naming one of this release's VolumeReplicationClasses drive Qumulo directory
+replication to the peer array the class names.
+
+  Requires the cluster-wide csi-addons CRDs and controller, which an
+  administrator installs once for all CSI drivers:
+
+    kubectl get crd | grep csiaddons
+    kubectl get pods -A | grep csi-addons-controller
+
+  Quiesce workloads before a planned promote: a frozen source silently drops
+  appends. Known limits: docs/reference/supported-features.md, section 5.
+{{ end -}}
+{{- $scheduled := list -}}
+{{- $domains := list -}}
+{{- range $sc := .Values.storageClasses -}}
+  {{- if $sc.snapshotSchedule }}{{ $scheduled = append $scheduled $sc.name }}{{ end -}}
+  {{- if $sc.adDomain }}{{ $domains = append $domains $sc.name }}{{ end -}}
+{{- end -}}
+{{- if $scheduled }}
+Scheduled snapshots are attached by: {{ join ", " $scheduled }}.
+The cluster takes them on its own. They are deliberately NOT visible as
+VolumeSnapshots, so kubectl cannot delete a scheduled backup by accident.
+Always set keep= on the schedule, or the snapshots never expire.
+{{ end -}}
+{{- if $domains }}
+adDomain is set on: {{ join ", " $domains }}.
+Those classes nest their volumes under a per-domain directory. This changes the
+LAYOUT only -- it grants and restricts nothing. Per-domain access control needs
+Kerberos on the export, which this driver does not configure.
+
+Nothing needs configuring for that: ListVolumes and GetCapacity both derive the
+domain directory from the class's own adDomain, so a domain's volumes are
+listed and its quota measured without a separate path list to maintain.
+{{ end -}}

@@ -1,0 +1,1205 @@
+# Plugin name registered with Kubernetes. It must match the CSIDriver object
+# and the provisioner field of every StorageClass, so changing it after volumes
+# exist orphans them.
+#
+# It also decides how many releases of this chart a cluster can hold. The
+# CSIDriver object is cluster-scoped and named for this value, so a second
+# release -- in another namespace, or the same one under a new name -- fails
+# on Helm ownership of that object unless it sets a different driverName. The
+# error names Helm annotations and means "this driver is already installed
+# here"; see docs/reference/supported-features.md.
+#
+# Serving several Qumulo clusters needs only one release: each StorageClass
+# names its own server and Secret. A second release is for running two driver
+# *versions* side by side, and nothing else.
+driverName: csi.qumulo.com
+
+# allowClassRemoval lets an upgrade render fewer StorageClasses,
+# VolumeSnapshotClasses or VolumeReplicationClasses than the release already
+# manages. Off, such an upgrade is refused: it is almost always
+# `helm upgrade --set ...` without the values file. The classes carry
+# helm.sh/resource-policy: keep either way, so Helm never deletes one; a class
+# removed from values is left on the cluster for you to delete with kubectl.
+allowClassRemoval: false
+
+# requireAllowedClients refuses, at install and upgrade, a dedicated-export
+# StorageClass that sets no allowedClients. Such a class's exports admit any
+# NFS client that can reach the array -- as root, from any port, with no
+# authentication. On by default: a class that is meant to
+# be open says so with allowAnyClient: true, which renders the class parameter
+# allowAnyClient: "true". A Kerberos class (securityFlavor krb5, krb5i or
+# krb5p) is not open and is not refused. The value also sets the controller's
+# -require-allowed-clients, so the driver refuses, at CreateVolume, an open
+# class made outside this chart -- and an open class rendered by an earlier
+# chart without the parameter: re-create that class, because a StorageClass's
+# parameters cannot be changed. false restores the old behaviour for every
+# class at once; it is kept for one release for upgrades, and NOTES.txt still
+# warns about each open class.
+requireAllowedClients: true
+
+rbac:
+  # Grant the controller cluster-wide get on Secrets, instead of the default:
+  # get on exactly the Secrets this release's classes name, plus extraSecrets,
+  # through one Role per namespace. Needed only for classes or
+  # VolumeSnapshotContents created outside this chart that name other Secrets.
+  clusterWideSecrets: false
+  # Further Secrets the controller must read, e.g. the deletion Secret a
+  # static PV's or an imported VolumeSnapshotContent's annotations name when
+  # it is not one of the classes' own:
+  #   - {secretName: legacy-token, secretNamespace: storage}
+  extraSecrets: []
+  # Render this chart's RoleBindings and ClusterRoleBindings. false renders
+  # none of them -- for a cluster where a policy (a Gatekeeper rule, for
+  # example) lets only a platform team create or change bindings. The
+  # ServiceAccounts, Roles, ClusterRoles and the node SCC are still rendered,
+  # and Helm never creates, patches or adopts a binding. The platform team
+  # applies them first; get the exact YAML with
+  #   helm template <release> <chart> -n <namespace> -f values.yaml \
+  #     --set rbac.createBindings=true --show-only templates/rbac-bindings.yaml
+  # and see docs/operate/openshift-operations.md, "Bindings applied by a
+  # platform team". Switching an installed release to false makes Helm delete
+  # the bindings it made: read that section first.
+  createBindings: true
+  # With createBindings false: before anything is applied, check that every
+  # binding this release needs exists, points at the right role and names the
+  # right ServiceAccount, and stop the install naming the ones that do not.
+  # Read-only. false skips it, for an install identity that may not read
+  # RoleBindings and ClusterRoleBindings.
+  checkBindings: true
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Extra labels merged onto every object this chart renders -- StorageClasses,
+# VolumeSnapshotClasses and RBAC included, not just the workloads. Useful for
+# cost-center/team/compliance tags an org applies chart-wide.
+#
+# A key that collides with one of the chart's own app.kubernetes.io/* or
+# helm.sh/chart labels is ignored rather than overwriting it: those identify
+# the release to Helm and to the controller/node Deployment-DaemonSet
+# selectors, and letting an arbitrary value replace one would risk breaking
+# selector matching on upgrade.
+commonLabels: {}
+  # team: storage
+  # cost-center: "1234"
+
+image:
+  # Controller and node ship as separate images: the node needs an NFS client
+  # userland (mount, umount, mount.nfs) that the controller has no use for, and
+  # the controller stays on a minimal UBI micro base that cannot mount at all.
+  #
+  # Released images are published to the GitHub Container Registry, for
+  # linux/amd64 and linux/arm64. The packages are visible to members of the
+  # Qumulo GitHub organization only, so a pull needs credentials: see
+  # pullSecrets below. A locally built image (`make docker-build`) is named
+  # without a registry; set repository to that bare name to run it.
+  controller:
+    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller
+    # Defaults to the chart's appVersion, which is the release version and the
+    # only tag a released image carries: "0.1.1", never "0.1.1-<commit>". To
+    # pin the exact image, append its digest: "0.1.1@sha256:<digest>".
+    tag: ""
+    # Empty lets the chart choose from the tag. A bare release tag such
+    # as "0.1.1" is moved by every publish of that version, so it is pulled
+    # Always: a node that cached an earlier 0.1.1 would otherwise keep running
+    # it, under a chart that may pass it flags it does not know. A digest, or
+    # a locally built tag carrying a "-" suffix ("0.1.1-<commit>", what
+    # `make docker-build` applies and never publishes), names one image for
+    # good, so it is pulled IfNotPresent. Set a value to override; a locally
+    # loaded image needs IfNotPresent or Never.
+    #
+    # Pinning the digest is what makes an install reproducible, and it is
+    # worth doing in production: the tag alone records which release, not
+    # which build of it.
+    pullPolicy: ""
+  node:
+    repository: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node
+    tag: ""
+    pullPolicy: ""
+  # Required for ghcr.io while the packages are not public: a
+  # kubernetes.io/dockerconfigjson Secret in the release namespace, made from
+  # a GitHub token with the read:packages scope. See
+  # docs/get-started/install.md, step 2.
+  pullSecrets: []
+  #   - name: ghcr-pull
+
+# Official Kubernetes CSI sidecars. There is deliberately no csi-attacher: the
+# driver implements no ControllerPublishVolume, so attachRequired is false and
+# an attacher would wait for an RPC that never comes. csi-snapshotter ships but
+# is off by default -- see sidecars.snapshotter below.
+#
+# Every sidecar image is pinned by tag AND digest: "<name>:<tag>@sha256:<d>".
+# The tag says which release it is; the digest is what the kubelet pulls, and
+# it names those exact bytes for good -- a tag is a label a registry can move,
+# a digest is not. Each digest is the multi-arch image *index*, so the pin
+# still covers linux/amd64 and linux/arm64. On OpenShift a digest is also
+# what an ImageDigestMirrorSet redirects to a disconnected mirror.
+#
+# To change a version, replace the tag and the digest together; take the
+# digest from `docker buildx imagetools inspect <name>:<tag>` (the top-level
+# "Digest:" line). A mirror keeps the digest only if it copies the whole
+# index (`skopeo copy --all`, `crane copy`); otherwise set the mirror's own
+# digest, or a bare tag. values.schema.json refuses an image with no tag and
+# no digest, and the tag "latest": both float.
+sidecars:
+  provisioner:
+    image: registry.k8s.io/sig-storage/csi-provisioner:v6.4.1@sha256:9e76a2c599ffd7a66f08feeb62ddec61e3545eaa442f8f8f6a495569c0b06829
+    # Adds csi.storage.k8s.io/pvc/name, /pvc/namespace and /pv/name to
+    # CreateVolume. The driver allowlists that prefix and otherwise ignores
+    # the values: it neither logs them nor names anything after them.
+    extraCreateMetadata: true
+    timeout: 60s
+  resizer:
+    image: registry.k8s.io/sig-storage/csi-resizer:v2.3.1@sha256:d5b040c2f6ffb25127169feeb845aaf1fa3279e510d71fbebe386b5becc625cc
+    timeout: 60s
+  livenessProbe:
+    image: registry.k8s.io/sig-storage/livenessprobe:v2.20.1@sha256:d06ac4f9242654f278d9c8a4e343b0516542bfc614218d469959c6428765e97f
+  nodeDriverRegistrar:
+    image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.1@sha256:f847fb218cdf1d0f0fa79772ca6f46e11d25635eb49c06efb5dccd00b5245ef5
+  # Every sidecar above except the liveness probe also takes extraArgs: a
+  # list of further flags, rendered verbatim after the chart's own. This is
+  # where its workers, client-side rate limits and retry intervals are tuned
+  # -- with many arrays, or one that is down, the provisioner's shared
+  # workers and its 5 QPS client are what everything queues on:
+  #   provisioner:
+  #     extraArgs: ["--worker-threads=200", "--kube-api-qps=50", "--kube-api-burst=100", "--retry-interval-max=2m"]
+  # Storage capacity reporting, off by default.
+  #
+  # With this on, csi-provisioner polls the driver's GetCapacity once per
+  # StorageClass and publishes a CSIStorageCapacity object per class. The driver
+  # answers by reading that class's own provisioner Secret from the Kubernetes
+  # API and asking that cluster for its free space, so a release serving several
+  # Qumulo clusters reports each one separately -- there is no shared number.
+  #
+  # It is opt-in for two reasons. It is the only feature that needs the driver
+  # container to talk to the Kubernetes API, and every other RPC works without
+  # it. And with volumeBindingMode: Immediate -- which this chart sets, because
+  # an NFS export is reachable from every node and there is no topology for the
+  # scheduler to resolve -- the objects are informational: they are read by
+  # `kubectl get csistoragecapacity`, not used to filter scheduling. Turn it on
+  # to see per-class free space, not to change placement.
+  #
+  # Two caveats worth knowing before enabling:
+  #   - The number is the tighter of the cluster's free space and the room
+  #     left under the quota on the class's basePath (limit minus usage), when
+  #     there is one. If the array reports no usage for that quota, the limit
+  #     is used instead: a correct upper bound, but a loose one (logged at
+  #     Debug only).
+  #   - A class whose secret reference is templated (${pvc.namespace}) cannot
+  #     report capacity: there is no PVC to expand the template against. That
+  #     class's GetCapacity fails and every other class keeps working.
+  capacity:
+    enabled: false
+
+  # Snapshot support, off by default.
+  #
+  # The sidecar cannot start without the VolumeSnapshot CRDs and the cluster's
+  # snapshot-controller, which are shared infrastructure an administrator
+  # installs once -- not this chart's to own. Enabling it on a cluster that
+  # lacks them leaves the controller pod un-Ready, which stops provisioning
+  # too, because every container shares one pod.
+  #
+  #   kubectl get crd | grep snapshot
+  #   kubectl get pods -A | grep snapshot-controller
+  #
+  # Snapshots can be taken, deleted and restored. Restore copies the tree
+  # file by file -- Qumulo has no tree-clone API -- so it is capped at 50,000
+  # entries (files and directories) / 2 TiB, checked against the snapshot
+  # before anything is copied, and a PVC smaller than the snapshot's data is
+  # refused (OutOfRange). A large restore may take several CreateVolume
+  # retries before the PVC binds; each resumes where the last stopped. The
+  # volume is never visible half-restored.
+  #
+  # snapshotNamePrefix is the sidecar's --snapshot-name-prefix, and the
+  # driver is given it too: a snapshot not named "<prefix>-..." is taken for
+  # one this driver did not make, so deleting it needs allowForeignSnapshotDelete
+  # in the deletion Secret. Set it here, never through extraArgs --
+  # the chart refuses that, since the driver would not hear of it. Changing it
+  # on a release with snapshots makes those snapshots foreign.
+  snapshotter:
+    enabled: false
+    image: registry.k8s.io/sig-storage/csi-snapshotter:v8.7.1@sha256:b534b99edb61a5f95e297da8e2a133d36e27ad098e2f643393986e86f093d425
+    timeout: 60s
+    snapshotNamePrefix: snapshot
+
+  # csi-addons sidecar for volume replication. Supported, opt-in: off by default.
+  #
+  # With this on, the controller pod gains the csi-addons k8s-sidecar, which
+  # registers a CSIAddonsNode for this pod and turns VolumeReplication
+  # objects into replication RPCs on the driver's socket; and the driver is
+  # started with -enable-replication so it serves those RPCs. Each RPC drives
+  # Qumulo directory replication between the array a volume lives on and the
+  # peer array its VolumeReplicationClass names, authenticating from the
+  # class's own Secret per request -- no Kubernetes access is needed.
+  #
+  # Off by default for the same reason the snapshotter is: the sidecar cannot
+  # start without the csi-addons CRDs and controller, which an administrator
+  # installs once, and a container that will not start takes the whole
+  # controller pod with it. What replication does and does not do, and its
+  # known limits, are in docs/reference/supported-features.md (section 5)
+  # and docs/protect/replicate.md.
+  #
+  #   kubectl get crd | grep csiaddons
+  #   kubectl get pods -A | grep csi-addons-controller
+  csiAddons:
+    enabled: false
+    # Every lab measurement was made with sidecar and
+    # controller v0.15.0: the TokenReview/SubjectAccessReview RBAC in
+    # rbac.yaml, the replication_source handle field, the enable-once cadence
+    # and the force-on-FailedPrecondition promote. v0.15.1 is a
+    # dependency-only patch (grpc 1.83.1 -> 1.83.2, Kubernetes libraries,
+    # protobuf) taken for its CVE fixes (fixable highs 22 -> 12). It still
+    # carried 12 fixable HIGHs (Go stdlib 1.26.8, golang.org/x/net v0.58.0),
+    # so the image here is OUR rebuild of upstream v0.15.1 at the tag's own
+    # commit (f7f0778d) with Go 1.27.4 and x/net v0.62.0 on UBI 9 micro:
+    # 0 fixable HIGH/CRITICAL (build/csi-addons-sidecar/, published by
+    # release.yml). Re-measured on it on kind against the lab pair
+    # (2026-11-25, controller v0.15.1): failover, failback, forced failover
+    # and the old-primary cases pass. Switch back to quay.io/csiaddons at the
+    # first upstream release with no fixable HIGH/CRITICAL.
+    # TestChartCSIAddonsIsWiredConsistently pins it; change it (tag and
+    # digest) together with a re-run of those rounds.
+    image: ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.1@sha256:27f74ea6356d63d13d29142ca0fc5beebfb823ced021e72c9d6a81a80f11cc34
+    # The port the csi-addons controller reaches this sidecar on, recorded in
+    # the CSIAddonsNode it registers.
+    controllerPort: 9070
+    # How long the array keeps the snapshot it takes of a replication target
+    # before each revert. A promote or DR drill (make-writable) and a resync
+    # or failback (reconnect) make the target array revert the target to its
+    # recovery point, and first it snapshots what is there as
+    # "<id>_revert_to_<recovery point>_for_<name>" -- with no expiry, so each
+    # one held the discarded data for ever. The driver gives each one
+    # this expiry when it sees it: after a reconnect, a resync reports ready
+    # only once the snapshot has it (up to 2 minutes), and disabling
+    # replication stamps any left on either array. It is the only
+    # copy of what the revert threw away, so it is kept rather than deleted.
+    # "0s" leaves them never expiring, as the array makes them.
+    revertSnapshotRetention: 168h
+
+  # external-health-monitor controller, off by default. It polls each
+  # bound volume with ControllerGetVolumeHealth -- is the directory still
+  # there, does an NFS export still cover it, has it its quota -- and records
+  # the answer on the claim, in pvc.status.healthStatus. That field exists
+  # only from Kubernetes 1.37, and only with the CSIVolumeHealth feature gate
+  # on the API server; on 1.36 the monitor runs and nothing is recorded.
+  #
+  # Needs controller.inventory.enabled: the monitor sends no Secret, so the
+  # driver finds each volume's credential from the classes, as for
+  # ControllerGetVolume. The chart refuses the one without the other. Its
+  # RBAC is the controller's existing ClusterRole.
+  healthMonitor:
+    enabled: false
+    image: registry.k8s.io/sig-storage/csi-external-health-monitor-controller:v0.19.0@sha256:8aaa848b50f27a4d96dda8a267fe8d9d89e49877d126db22048c039688f12b57
+    timeout: 15s
+    # How often each volume is asked. Every ask is a few REST reads on the
+    # volume's array, so this is per volume.
+    monitorInterval: 5m
+
+qumulo:
+  # This driver keeps NO cluster-wide address and NO cluster-wide credential.
+  #
+  # Every volume operation is routed by the StorageClass that owns it: the class
+  # names its own `server` and its own `secretName`, and the controller builds
+  # an API client per request from those. One release therefore serves any number
+  # of Qumulo clusters, and no request can be answered against a cluster it did
+  # not name.
+  #
+  # Three RPCs are given no secrets by the CSI spec, and each is handled
+  # differently. GetCapacity is handed the class's parameters verbatim, secret
+  # references included, so it resolves the one Secret its own request named --
+  # see sidecars.capacity. ListVolumes and ControllerGetVolume name no Secret at
+  # all, so they discover clusters by listing this driver's StorageClasses; that
+  # is opt-in behind controller.inventory.enabled, and off by default.
+  #
+  # Removed in the multi-cluster purge -- setting them now has no effect, and
+  # the controller logs a warning naming any it finds in the environment:
+  #   old top-level cluster address -> storageClasses[].server     (required)
+  #   old top-level API URL         -> storageClasses[].apiUrl     (optional)
+  #   old top-level token           -> storageClasses[].secretName (required)
+  # -- all three are now per class. The old top-level managed-path list is
+  # gone outright: ListVolumes derives its paths from each StorageClass's own
+  # basePath, so there is no list to keep in step by hand.
+
+  # Per-request timeout for calls to the Qumulo REST API.
+  apiTimeout: 10s
+
+  # Skip verification of the cluster's TLS certificate. Development only.
+  #
+  # Qumulo clusters ship a self-signed certificate whose subject is CN=localhost
+  # with no subjectAltName. Go has ignored CN since 1.15, so that certificate can
+  # never verify, whatever you trust. Turning verification on needs BOTH:
+  #
+  #   1. a cluster certificate carrying a SAN that matches how the driver
+  #      addresses the cluster -- an IP: entry for an address, DNS: for a name.
+  #      Install it with: qq ssl_modify_certificate -c chain.pem -k cluster.key
+  #      (that command installs, it does not generate -- make the files with
+  #      openssl first). Cover every node address, since any of them may serve
+  #      the Web UI and REST.
+  #   2. its CA trusted by the controller -- a public CA needs nothing, a
+  #      private or self-signed CA needs qumulo.caBundle below.
+  insecureSkipTlsVerify: false
+
+  # CA certificate used to verify the cluster, for a private or self-signed CA.
+  #
+  # Not needed for a certificate from a public CA: the controller image already
+  # carries the standard bundle. Needed for your own CA, and it is the whole
+  # reason a self-signed certificate can work -- the chart mounts the ConfigMap
+  # and sets SSL_CERT_FILE, which Go's crypto/x509 reads in place of the image
+  # bundle. The driver itself needs no CA flag.
+  #
+  # Mounted on the controller only. The node plugin performs NFS mounts and
+  # never calls the REST API, so a CA there would go unused.
+  #
+  #   kubectl -n <namespace> create configmap qumulo-ca --from-file=ca.crt=ca.crt
+  #
+  # Setting this together with insecureSkipTlsVerify: true is refused: it asks
+  # the chart to supply a CA and then ignore it, which is always a mistake.
+  caBundle:
+    # Name of an existing ConfigMap holding the CA certificate in PEM form.
+    # Empty disables the feature.
+    existingConfigMap: ""
+    # Key within that ConfigMap, and the filename it is mounted as.
+    key: ca.crt
+
+# How Kubernetes applies a pod's fsGroup to a mounted volume.
+#
+# None is the default deliberately. File would have the kubelet walk the whole
+# volume applying group ownership on every mount, which on a shared NFS tree is
+# both slow and wrong -- other pods may hold the same export. Set it to File
+# only if your workloads depend on fsGroup and your volumes are single-writer,
+# and then set fsGroupChangePolicy: OnRootMismatch on the pods: the walk is two
+# SETATTRs per file, on every pod start (see the chart README).
+fsGroupPolicy: None
+
+# Prometheus metrics. Off by default.
+#
+# With this on, the driver serves /metrics and a process-liveness /healthz on
+# its own port in both the controller and the node pod, the three CSI sidecars
+# are given --http-endpoint so their csi_sidecar_operations_seconds is
+# scrapeable too, and the chart renders a Service per workload for something to
+# scrape. What the driver exports is documented series by series in
+# docs/reference/metrics.md.
+#
+# Read this before you build an alert on it. Nothing here is polled. The
+# controller holds no cluster address and no standing API credential
+# (ARCHITECTURE.md Rule 0), so there is no set of arrays it could sample and no
+# token it could sample them with. Every array-side figure -- reachability,
+# quota usage, replication recovery point -- is the last value an RPC
+# happened to produce, and an idle driver's gauges are as old as its last
+# request. Series from work the driver does continuously (RPC counts and
+# latency) have no such caveat.
+#
+# Ports continue the chart's existing 2965x range, whose first two are the
+# livenessprobe sidecars' /healthz on :29652 and node.healthPort (29653). The node's port is a
+# HOST port, because the node DaemonSet runs with hostNetwork: true -- pick
+# one nothing else on your workers binds.
+metrics:
+  enabled: false
+
+  # Render the ServiceMonitor and PrometheusRule without checking that the
+  # monitoring.coreos.com/v1 CRD exists on the cluster. Both objects are
+  # normally guarded on that CRD, because a manifest for a kind the API
+  # server does not know fails the whole install. Set this for `helm template`
+  # into a GitOps repo, where the CRD exists on the target cluster but not on
+  # the machine doing the rendering.
+  forceEnable: false
+
+  port:
+    # The driver's own /metrics in the controller pod.
+    controller: 29654
+    # The driver's own /metrics in the node pod. A host port; see above.
+    node: 29655
+    # The sidecars' own metrics, which the driver does not produce and cannot
+    # produce: csi_sidecar_operations_seconds is how long the *sidecar*
+    # waited on an RPC, which is the number that includes its own retries.
+    provisioner: 29656
+    resizer: 29657
+    # Only bound when sidecars.snapshotter.enabled is also true.
+    snapshotter: 29658
+
+  service:
+    # Merged onto both metrics Services. Use this for a Prometheus that
+    # discovers by annotation rather than by ServiceMonitor.
+    annotations: {}
+      # prometheus.io/scrape: "true"
+
+  # A NetworkPolicy that admits the controller's metrics ports only from the
+  # peers listed. Off by default, because a NetworkPolicy changes
+  # nothing without a CNI that enforces it and breaks scraping when the
+  # monitoring namespace's label is wrong. The per-volume series carry each
+  # volume's array and path, and without this any pod in any namespace can
+  # read them. The livenessprobe and csi-addons ports stay open to all. The
+  # node pods are hostNetwork, which a NetworkPolicy does not cover; their
+  # listener binds the node's own address instead.
+  networkPolicy:
+    enabled: false
+    # NetworkPolicy ingress peers allowed to scrape.
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+
+  # A ServiceMonitor for the Prometheus Operator. Rendered only when this is
+  # enabled AND the monitoring.coreos.com/v1 CRD is present, or forceEnable
+  # above is set.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels, for a Prometheus whose serviceMonitorSelector needs one.
+    labels: {}
+
+  # A starter PrometheusRule. Same CRD guard as the ServiceMonitor, and the
+  # same metrics.forceEnable escape hatch.
+  #
+  # Seven alerts, each of which exists because the lab produced the failure it
+  # covers. The replication one is deliberately on recovery-point age and not
+  # on state: a target array reported ESTABLISHED with no error for 25 minutes
+  # while its source was dead, so state is the description and age is
+  # the alarm.
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # Recovery-point age, in seconds, that means the replica is too far
+    # behind. The default matches the 15 minutes most DR runbooks treat as
+    # the floor for an asynchronous RPO.
+    recoveryPointAgeSeconds: 900
+    # The same threshold for policy-mode relationships (replicationMode:
+    # policy), whose recovery point moves only when a scheduled snapshot
+    # replicates -- so a healthy one is up to a whole schedule interval old.
+    # Set it to about 1.5 x the longest snapshotSchedule interval among the
+    # policy-mode classes. The default suits an hourly schedule; a daily
+    # schedule needs about 129600.
+    policyModeRecoveryPointAgeSeconds: 5400
+    # The threshold for a relationship this controller reads only from its
+    # target array -- a DR-side controller -- which reports no mode, so it
+    # cannot tell continuous from policy. Unset, it is
+    # policyModeRecoveryPointAgeSeconds: the source's own controller, which
+    # sees the mode, still alerts on the strict threshold. Set it to
+    # recoveryPointAgeSeconds if this cluster's DR relationships are all
+    # continuous.
+    unknownModeRecoveryPointAgeSeconds: null
+    # When the controller has read a policy-mode relationship's snapshot
+    # policy, its schedule interval sets the threshold instead of the two
+    # above: this many intervals, never below recoveryPointAgeSeconds. The
+    # interval is the longest gap between two of the policy's snapshots, so
+    # 1.5 leaves half a cycle for the snapshot to cross.
+    policyIntervalFactor: 1.5
+    # Fraction of a volume's quota that counts as nearly full.
+    volumeNearQuotaRatio: 0.9
+
+  # The Grafana dashboard (dashboards/qumulo-csi.json in this chart), as a
+  # ConfigMap. Off by default. Needs metrics.enabled; no CRD is involved.
+  #
+  # The default label is the one the Grafana sidecar in kube-prometheus-stack
+  # watches, so that Grafana imports it with no further step. For the
+  # OpenShift console (Observe > Dashboards) set namespace to
+  # openshift-config-managed and labels to
+  # {console.openshift.io/dashboard: "true"}; the release's Helm user then
+  # needs to be able to create ConfigMaps in that namespace.
+  dashboard:
+    enabled: false
+    # Namespace for the ConfigMap. Empty means the release namespace.
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+    # Extra annotations, e.g. grafana_folder for the Grafana sidecar.
+    annotations: {}
+
+# OpenShift. Its admission (Security Context Constraints, SCCs) refuses this
+# chart's pods unless two things change, and both are made here:
+#
+#   - The node plugin runs privileged, on the host network, with host paths.
+#     No SCC a fresh service account may use allows that, so the DaemonSet
+#     creates no pods at all while `helm install` still reports success. The
+#     chart renders its own SCC, allowing exactly what the node pod needs and
+#     nothing more, and grants it to the node service account alone through
+#     RBAC -- not the built-in `privileged` SCC, whose use CIS OpenShift 5.2
+#     asks to keep minimal.
+#   - The controller's fixed uid (controller.securityContext.runAsUser 65532)
+#     is outside the per-namespace uid range restricted-v2 enforces, so every
+#     controller pod is refused. On OpenShift the chart leaves runAsUser and
+#     runAsGroup out and OpenShift assigns a uid from the range; runAsNonRoot
+#     stays.
+#
+# Each pod also names its SCC (openshift.io/required-scc), so admission never
+# picks another one a cluster admin happened to grant.
+openshift:
+  # auto: on when the cluster serves security.openshift.io/v1
+  # SecurityContextConstraints. helm template and other offline renders see no
+  # cluster, so set true there (GitOps), as with metrics.forceEnable.
+  enabled: auto
+  # The SCC the controller pods (and the helm test pods) are pinned to.
+  # Empty: restricted-v2, OpenShift's default for ordinary workloads, or
+  # hostnetwork-v2 with controller.hostNetwork (restricted-v2 refuses host
+  # networking; hostnetwork-v2 allows it and nothing more: no privilege, no
+  # hostPath, all capabilities dropped, a uid from the namespace's range). A
+  # cluster that gives workloads its own SCC (restricted-csi, say) names it
+  # here. Whether the fixed uid is dropped is assignControllerUID, below.
+  controllerSCC: ""
+  # With controller.hostNetwork, the ClusterRole that grants use of
+  # controllerSCC, bound to the controller service account only (a RoleBinding
+  # in the release namespace, separate from the node's grant). Empty:
+  # system:openshift:scc:<controllerSCC>, which OpenShift ships for its own
+  # SCCs. Name your own for a custom SCC. With rbac.createBindings: false the
+  # platform team applies this binding with the others.
+  controllerSCCRole: ""
+  # The SCC the helm test pods are pinned to. Empty: controllerSCC, or
+  # restricted-v2 with controller.hostNetwork (the test pods never use the
+  # host network, so they need no grant of the controller's SCC).
+  testSCC: ""
+  # Whether OpenShift assigns the controller's uid, so the chart leaves
+  # runAsUser and runAsGroup out. auto: when controllerSCC starts with
+  # "restricted" or "hostnetwork" (restricted-v2, restricted-v3, a custom
+  # restricted-csi, hostnetwork-v2). true:
+  # always, for a custom SCC with another name that assigns a uid from the
+  # namespace's range (runAsUser type MustRunAsRange). false: never, for an
+  # SCC that lets the pod choose (nonroot-v2, anyuid). The helm test pods use
+  # controllerSCC and follow the same choice.
+  assignControllerUID: auto
+  nodeSCC:
+    # false: render no SCC or grant, and pin the node pods to nodeSCC.name,
+    # an SCC the cluster admin made and granted to the node service account.
+    create: true
+    # Empty: <namespace>-<fullname>-node, or <fullname>-node when the release
+    # is named after its namespace (qumulo-csi in qumulo-csi gives
+    # qumulo-csi-qumulo-csi-driver-node). SCCs are cluster-scoped, so the
+    # namespace stays in the name to keep two releases of the same name apart.
+    name: ""
+  # Trust the cluster's CA bundle for the Qumulo API: the system CAs
+  # plus any the admin added to the cluster Proxy's trustedCA. The chart
+  # creates an empty ConfigMap labelled
+  # config.openshift.io/inject-trusted-cabundle, OpenShift fills it, and the
+  # controller reads it through SSL_CERT_FILE. The controller pod waits for
+  # the fill (a few seconds), so it never starts with an empty CA list.
+  # Use instead of qumulo.caBundle, not with it; refused with
+  # qumulo.insecureSkipTlsVerify.
+  trustedCABundle: false
+
+controller:
+  # Volume inventory: ListVolumes and ControllerGetVolume. Off by default.
+  #
+  # These two are the only RPCs that let the controller act on a cluster no
+  # request named. Every other operation is routed by the StorageClass that
+  # owns it, but ListVolumes is handed nothing at all -- so answering it means
+  # listing this driver's StorageClasses through the Kubernetes API to find the
+  # clusters they point at, and reading each class's provisioner Secret.
+  # ListVolumes also lists this driver's PersistentVolumes, to report each
+  # directory under the handle its PV carries. Rule 0
+  # in ARCHITECTURE.md draws the line there, which is why this is opt-in rather than
+  # simply on.
+  #
+  # It needs no extra RBAC: the ClusterRole already grants storageclasses
+  # list/get, persistentvolumes list/get and secrets get, because the
+  # sidecars need them, and every
+  # container in the pod shares one ServiceAccount. Turning this on changes
+  # which container uses rights the pod already had.
+  #
+  # With it off, both RPCs return FailedPrecondition naming this value, and
+  # nothing else about the driver changes. Note the capabilities are advertised
+  # either way, on purpose: a capability that appears and disappears with a
+  # value is worse to operate than one that answers with the reason it cannot.
+  #
+  # What it is for: reconciliation tooling that calls ListVolumes or
+  # ControllerGetVolume directly, to compare PersistentVolumes against what is
+  # really on the arrays. This chart deploys no such caller. One sidecar does
+  # reach the same credential resolution, though not those two RPCs: with
+  # controller.healthMonitor.enabled, external-health-monitor polls
+  # ControllerGetVolumeHealth, which the driver answers from the classes when
+  # the request carries no Secret. If you have neither, leave this
+  # off -- the array's own API gives a better inventory anyway, because it is
+  # not limited to the classes one Kubernetes cluster happens to define.
+  #
+  # Two behaviours to know before enabling:
+  #
+  #   - If any cluster a class names cannot be listed, ListVolumes fails
+  #     rather than returning the clusters that answered. A listing missing
+  #     one cluster's volumes cannot be told apart from those volumes having
+  #     been deleted, and reconcilers act on absence. The same holds for a
+  #     Secret read that fails transiently.
+  #   - A class whose credential is *permanently* unusable is skipped
+  #     instead, and only that class's volumes go unlisted. The
+  #     common cause is a class created outside this release naming a Secret
+  #     rbac.extraSecrets does not list. Watch
+  #     csi_qumulo_inventory_class_credential_usable: it reads 0, with the
+  #     class and the reason, for exactly this. If every class is skipped the
+  #     call is refused, so an empty listing never means "none readable".
+  inventory:
+    enabled: false
+
+  # Two by default, so a drain, an eviction or a node failure leaves a standby
+  # that takes the leases in about one lease period rather than every storage
+  # operation waiting for a new pod. 1 is still valid, for a lab.
+  replicaCount: 2
+  logLevel: info
+  # Leader election lets a second replica stand by without both provisioning.
+  # Off, more than one replica is refused, and rollouts use Recreate.
+  leaderElection: true
+  # Lease timings for the provisioner, resizer and snapshotter, as Go
+  # durations; unset keeps the sidecars' own 15s / 10s / 5s.
+  leaderElectionTimings: {}
+  #   leaseDuration: 15s
+  #   renewDeadline: 10s
+  #   retryPeriod: 5s
+  # A PodDisruptionBudget of maxUnavailable: 1, rendered only with more than
+  # one replica (with one it would block every drain).
+  podDisruptionBudget:
+    enabled: true
+  # The Deployment's update strategy, verbatim. Empty: Kubernetes' default
+  # RollingUpdate, or Recreate when leaderElection is off, or with hostNetwork
+  # RollingUpdate with maxSurge 0 (a surge pod would need a node no replica
+  # holds the ports on, and wait for one forever).
+  strategy: {}
+  # Run the controller pods on the node's network instead of the pod network,
+  # for arrays whose REST API is reachable only from the nodes' own routes (a
+  # storage network the pod network has no path to). Pick the nodes that have
+  # that route with controller.nodeSelector. Every port the pod listens on
+  # becomes a port on its node -- 29652, metrics.port.provisioner, .resizer,
+  # .snapshotter, and with them sidecars.csiAddons.controllerPort and
+  # metrics.port.controller -- so the replicas are kept on different nodes
+  # (required anti-affinity, unless controller.affinity is set) and need
+  # replicaCount nodes. A NetworkPolicy does not cover these ports. On
+  # OpenShift this selects openshift.controllerSCC hostnetwork-v2 and grants
+  # it to the controller service account.
+  hostNetwork: false
+  # The pod's dnsPolicy. Empty: ClusterFirstWithHostNet with hostNetwork, so
+  # the sidecars still resolve the Kubernetes API, else Kubernetes' default.
+  dnsPolicy: ""
+  # Passed verbatim. The default affinity (when affinity is empty) is a soft
+  # hostname anti-affinity between the replicas.
+  topologySpreadConstraints: []
+  # The qumulo-csi-driver container's resources. A request keeps the pod out
+  # of BestEffort, which the kubelet evicts first under memory pressure: an
+  # evicted controller stops every storage operation in the cluster, and one
+  # stopped mid-create used to strand that claim.
+  #
+  # Memory: limit equal to request, so the pod is never overcommitted on
+  # memory and is the last to be evicted, and policy engines that require a
+  # limit (Gatekeeper containerlimits, containerresourceratios) admit it.
+  # 1Gi because memory grows with listing and restore size: up to 4 restores
+  # run at once (maxConcurrentRestores) and one attempt was measured at
+  # 126 MiB of heap. An OOM-killed controller restarts, the standby
+  # takes the leases, and an interrupted restore resumes on its next retry.
+  # Raise both numbers together for very large restores or listings.
+  #
+  # No CPU limit, on purpose: CFS throttling slows every RPC without failing
+  # it, and a slowed-down CreateVolume or NodeUnpublish is a stuck claim or a
+  # stuck pod. Ephemeral storage covers the container's logs, which the
+  # kubelet rotates (OpenShift keeps 5 x 50Mi).
+  resources:
+    requests: {cpu: 20m, memory: 1Gi, ephemeral-storage: 16Mi}
+    limits: {memory: 1Gi, ephemeral-storage: 500Mi}
+  # Every controller sidecar's resources except csi-provisioner's and
+  # csi-resizer's (liveness probe, and snapshotter / csi-addons / health
+  # monitor when enabled). Idle they use 12-22Mi on OpenShift 4.22, and none
+  # of them grew past 30Mi with 5,000 volumes.
+  sidecarResources:
+    requests: {cpu: 5m, memory: 128Mi, ephemeral-storage: 16Mi}
+    limits: {memory: 128Mi, ephemeral-storage: 500Mi}
+  # csi-provisioner's and csi-resizer's resources. Both cache every claim and
+  # PersistentVolume in the cluster, so their memory grows with the number of
+  # volumes. Measured on OpenShift 4.22 with 5,000 volumes: csi-provisioner
+  # about 25Mi per 1,000 volumes, 147Mi at its peak (it was OOM-killed at the
+  # old shared 128Mi); csi-resizer 84Mi, 128Mi at its peak while they were
+  # deleted. These defaults leave room for about 15,000 volumes; see the
+  # chart README, "Sizing the controller for many volumes".
+  provisionerResources:
+    requests: {cpu: 5m, memory: 512Mi, ephemeral-storage: 16Mi}
+    limits: {memory: 512Mi, ephemeral-storage: 500Mi}
+  resizerResources:
+    requests: {cpu: 5m, memory: 256Mi, ephemeral-storage: 16Mi}
+    limits: {memory: 256Mi, ephemeral-storage: 500Mi}
+  # system-cluster-critical, Kubernetes' built-in class for cluster add-ons,
+  # so the scheduler places and keeps the controller ahead of workloads. ""
+  # sets none.
+  priorityClassName: system-cluster-critical
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  # An HTTP(S) proxy for the controller's calls to the Qumulo REST API,
+  # for clusters that reach the arrays only through one. Empty: no proxy,
+  # which is the default and what a cluster with direct access needs.
+  # Only the driver container gets these; it is the one container that talks
+  # to an array. The sidecars talk only to the Kubernetes API.
+  #
+  # On OpenShift the cluster's own settings are in the Proxy object:
+  #   oc get proxy cluster -o jsonpath='{.status}'
+  # Pods do not inherit them, so copy them here.
+  #
+  # NO_PROXY always also gets .svc, .cluster.local and the Kubernetes API
+  # service address, so the driver's own API calls never go through the proxy.
+  # List the arrays here if some are reached directly.
+  proxy:
+    httpsProxy: ""
+    httpProxy: ""
+    noProxy: ""
+
+  # How long the kubelet waits after SIGTERM before SIGKILL. The driver
+  # drains RPCs for 10s and then stops -- unless a planned promote is in
+  # flight, when it waits up to 75s more for it, so a restart does not leave
+  # both copies read-only. This has to exceed both together; a pod
+  # with no promote running still stops after about 10s.
+  terminationGracePeriodSeconds: 90
+
+  # Pod-level security context for the controller.
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Applied to every container in the controller pod -- the driver and every
+  # sidecar (provisioner, resizer, liveness-probe, and snapshotter / csi-addons
+  # when enabled).
+  #
+  # The controller can be fully non-root, and the node cannot: this process
+  # only speaks HTTPS to the Qumulo REST API and its socket lives in an
+  # emptyDir the kubelet creates world-writable. Nothing here touches the host.
+  #
+  # runAsUser is stated even though the controller image carries a numeric
+  # USER, because runAsNonRoot alone fails at admission for any image that
+  # declares no numeric user -- the kubelet cannot prove the uid is non-zero
+  # and refuses to start the container. Several sig-storage sidecars are in
+  # that position depending on version, so the uid is explicit for all of them.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+node:
+  # How long a node pod must be Ready before the rollout counts it and moves
+  # on.
+  minReadySeconds: 10
+  # The node livenessprobe sidecar's /healthz port. The node pod runs on
+  # the host network, so this is a HOST port on every node in the DaemonSet,
+  # bound to the node's own address rather than every interface. 29653 is
+  # also the upstream csi-driver-nfs node health port, so a cluster that runs
+  # both needs a different number here. It must not match a metrics port.
+  healthPort: 29653
+  # The node-driver-registrar's /healthz port, read by its own liveness and
+  # readiness probes. A HOST port too, bound to the node's own address. It is
+  # the registrar's health only; the pod's readiness also waits for the
+  # kubelet to register the plugin. It must not match another port.
+  # 0 is healthPort + 6 (29659 with the default healthPort), so a second
+  # release of the chart, which needs its own healthPort, gets its own
+  # registrar port with it.
+  registrarHealthPort: 0
+  # The DaemonSet's update strategy, verbatim; empty is Kubernetes' default
+  # (RollingUpdate, one node at a time).
+  updateStrategy: {}
+  # Kerberos for the data path (securityFlavor krb5/krb5i/krb5p).
+  #
+  # Approach 1 -- machine-account granularity. The node mounts as the *host* it
+  # runs on, using the keytab that host got when it joined the domain. Nothing
+  # per-tenant is distributed and the driver never handles a credential.
+  #
+  # Every node that may run a pod using a Kerberos StorageClass needs:
+  #   1. to be joined to the same AD domain as the Qumulo cluster,
+  #   2. a readable keytab at keytabPath and a krb5.conf at krb5ConfPath,
+  #   3. rpc.gssd running ON THE HOST -- the GSS upcall is resolved by the
+  #      host's kernel, so the daemon cannot live in this pod.
+  #
+  # Point 3 is the one that catches people. Without it a Kerberos mount fails at
+  # the GSS handshake. The chart refuses a Kerberos StorageClass unless
+  # kerberos.enabled is set, so this checklist is a deliberate act.
+  kerberos:
+    enabled: false
+    keytabPath: /etc/krb5.keytab
+    krb5ConfPath: /etc/krb5.conf
+    # FileOrCreate (default): on a node without the two host files the kubelet
+    # creates empty ones, so the node plugin still runs and every non-Kerberos
+    # volume mounts; a Kerberos volume on such a node is refused, naming the
+    # missing keytab. File: the node plugin is refused on such a node,
+    # so no volume of any class mounts there.
+    hostPathType: FileOrCreate
+
+  logLevel: info
+
+  # How long NodeUnpublishVolume waits for a plain umount(8) before escalating
+  # to a forced and then a lazy unmount. A Go duration ("45s", "90s"). Empty
+  # leaves the driver's own default of 30s and renders no argument.
+  #
+  # Why this exists: umount(8) blocks indefinitely on a mount whose Qumulo
+  # cluster is unreachable, and it does so on *every* NFS mount option. With an
+  # array powered off for 25 minutes, pods on hard, softerr, softreval and
+  # fatal_neterrors mounts all failed to terminate inside their 120s grace
+  # period, and force-deleting them left the mounts behind on the node. So the
+  # driver bounds the unmount and then escalates -- `umount -f`, then
+  # `umount -l` -- exactly as csi-driver-nfs and NetApp Trident do, and reports
+  # success only once the mount is gone from /proc/mounts.
+  #
+  # Raise it if a plain unmount on your network legitimately takes longer than
+  # 30s and you would rather wait than force. Do not raise it past the workload
+  # pods' terminationGracePeriodSeconds: the whole point is to finish inside it.
+  # The kubelet also gives each unmount a fixed two minutes, so a value near
+  # that is cut to leave the forced unmounts room inside it (in effect about
+  # 100s at most): raising it further changes nothing.
+  unmountTimeout: ""
+
+  # The kubelet's root directory. Non-default on some distributions: k3s and
+  # microk8s in particular.
+  kubeletDir: /var/lib/kubelet
+  # Requests per container, so the node pods are Burstable. With none they were
+  # BestEffort, the first class the kubelet evicts under node pressure -- and
+  # the node plugin is what has to unmount every volume on that node.
+  # No CPU limits: a throttled mount or unmount is a stuck pod.
+  #
+  # This map is per container, keyed by registrar, livenessProbe and driver.
+  #
+  # The older flat form -- one top-level {requests, limits} object covering all
+  # three containers -- is also accepted and applied to each of them. Only the
+  # requests, limits and claims keys are taken from it: Helm coalesces whatever
+  # you set with the per-container defaults below, so a flat form arrives here
+  # alongside them and the chart would otherwise render an invalid resources
+  # field. If you set a flat form and a per-container key together, the flat
+  # form wins and the per-container key is ignored -- pick one shape.
+  #
+  # {} means these defaults (so a --reuse-values upgrade gets them). Setting one
+  # container to an empty mapping does not give it no requests: Helm coalesces
+  # it with the default below and the container still gets the values shown
+  # here. To run a container with genuinely no requests, set it to null
+  # (driver: null), which removes the key outright -- note that this puts the
+  # node pods back in the BestEffort QoS class these defaults exist to avoid.
+  #
+  # Memory limit equal to request and an ephemeral-storage limit on each
+  # container; no CPU limit, because a throttled mount or unmount is a stuck
+  # pod (see controller.resources). The driver's memory includes the mount
+  # and umount helpers it runs; idle every container uses 7-25Mi (OCP 4.22
+  # lab, 2026-11-04).
+  resources:
+    registrar:
+      requests: {cpu: 5m, memory: 64Mi, ephemeral-storage: 16Mi}
+      limits: {memory: 64Mi, ephemeral-storage: 500Mi}
+    livenessProbe:
+      requests: {cpu: 5m, memory: 64Mi, ephemeral-storage: 16Mi}
+      limits: {memory: 64Mi, ephemeral-storage: 500Mi}
+    driver:
+      requests: {cpu: 20m, memory: 256Mi, ephemeral-storage: 16Mi}
+      limits: {memory: 256Mi, ephemeral-storage: 500Mi}
+  # The node plugin is a node-level add-on that pods depend on to mount and
+  # unmount, so it should not be preempted by ordinary workloads. By default
+  # the chart creates its own PriorityClass, <release>-node-critical, at the
+  # highest value a non-system class may have, and gives it to the node pods.
+  # It is cluster-scoped, so the installing user needs create on
+  # priorityclasses. The built-in system-node-critical is not the default:
+  # some clusters (GKE among them) admit system-*-critical pods only in
+  # kube-system, which would stop the DaemonSet scheduling here.
+  priorityClass:
+    create: true
+    value: 1000000000
+    # Never (the default for a new class) or PreemptLowerPriority, which is
+    # what system-node-critical has. With Never the node plugin never evicts
+    # a workload to fit, but a node plugin pod re-rolled onto a packed node
+    # can stay Pending, and that node's Qumulo volumes then cannot mount or
+    # unmount until room is made. Immutable: unset, an existing class
+    # keeps the policy it has; set to a different one, the upgrade is
+    # refused with what to do.
+    preemptionPolicy: ""
+  # A PriorityClass to use instead, such as system-node-critical where the
+  # cluster admits it in this namespace. Set, it wins over priorityClass.
+  priorityClassName: ""
+  nodeSelector: {}
+  # A node plugin has to run wherever workloads run, tainted nodes included, or
+  # pods scheduled there cannot mount.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  podAnnotations: {}
+
+  # As for the controller. A node pod's drain matters more: it is what lets an
+  # in-flight NodeUnpublishVolume finish rather than leaving a mount behind.
+  terminationGracePeriodSeconds: 30
+
+  # Pod-level security context for the node DaemonSet.
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Per-container, because the three containers in this pod need three
+  # different things. Privilege and root are separable, and the node needs
+  # them in different amounts.
+
+  # The driver: the one container that genuinely needs privilege. It mounts
+  # filesystems in the host's namespace, which is what privileged buys and
+  # what nothing else here needs. readOnlyRootFilesystem is off because
+  # mount(8) and mount.nfs write state.
+  driverSecurityContext:
+    privileged: true
+
+  # node-driver-registrar: unprivileged, but deliberately still root.
+  #
+  # It creates a socket in {{ kubeletDir }}/plugins_registry, a root-owned
+  # hostPath. A non-root process cannot write there, and the failure is the
+  # worst kind: the plugin silently never registers with the kubelet while the
+  # DaemonSet goes on reporting healthy. So this drops privilege, escalation
+  # and every capability, and keeps uid 0. Do not "tidy" runAsNonRoot in here.
+  registrarSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+  # liveness-probe: unprivileged, but deliberately still root, for the same
+  # reason as the registrar above.
+  #
+  # It *connects* to the driver's /csi/csi.sock, and the driver container is
+  # root here (it has to be, to mount), so the socket it creates is
+  # srwxr-xr-x root:root. Connecting to a unix socket needs the write bit, so a
+  # non-root uid cannot open it -- the sidecar logs "Still connecting" forever,
+  # never starts serving /healthz, and the driver container's livenessProbe
+  # then fails with connection refused and the kubelet kills the node plugin
+  # every ~2.5 minutes, for as long as the DaemonSet exists. Mounts still work
+  # in between, so this presents as a plugin that restarts for no reason rather
+  # than as a permission problem. Do not "tidy" runAsNonRoot in here.
+  #
+  # The controller's copy of this sidecar is non-root, and correctly so: that
+  # driver runs as 65532, so it owns its socket as 65532 too.
+  livenessProbeSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+# VolumeSnapshotClasses to create. Requires sidecars.snapshotter.enabled and the
+# cluster-wide snapshot CRDs.
+#
+# Each entry:
+#   name             (required) VolumeSnapshotClass name
+#   deletionPolicy   Delete (default) | Retain
+#   isDefault        make this the cluster's default snapshot class
+#   secretName       (required) Secret holding the API token for the cluster
+#                    whose volumes this class snapshots. Rendered into the
+#                    csi.storage.k8s.io/snapshotter-*-secret-name parameters, so
+#                    a release serving several clusters snapshots each with its
+#                    own credential.
+#   secretNamespace  namespace of that Secret; defaults to the release namespace
+volumeSnapshotClasses: []
+  #   isDefault: false
+  #   secretName: qumulo-cluster-a
+
+# VolumeReplicationClasses to create. Supported, opt-in. Requires
+# sidecars.csiAddons.enabled and the cluster-wide csi-addons CRDs.
+#
+# One class per direction: on each Kubernetes cluster the class names the PEER
+# array as the target. The Secret it names holds a token per array, keyed by
+# the host the controller dials (the host of apiUrl and of targetApiUrl), so
+# one Secret serves both directions; the plain "token" key also works for the
+# local array. Tokens need PRIVILEGE_REPLICATION_SOURCE_WRITE,
+# PRIVILEGE_REPLICATION_TARGET_WRITE, PRIVILEGE_REPLICATION_REVERSE_RELATIONSHIP,
+# PRIVILEGE_SNAPSHOT_DIFFERENCE_READ and PRIVILEGE_TIME_READ on top of the
+# privileges the README lists
+# (which include PRIVILEGE_REPLICATION_SOURCE_READ and _TARGET_READ: every
+# install needs those, for DeleteVolume and expand).
+#
+# Each entry:
+#   name                 (required) VolumeReplicationClass name
+#   targetServer         (required) peer array's replication address: a bare
+#                        host or IPv4, same rules as a StorageClass server
+#   targetApiUrl         peer REST endpoint. REQUIRED when targetServer is a
+#                        DNS name (a name can float between arrays at
+#                        failover; the controller must dial a fixed endpoint);
+#                        optional for an IPv4 literal, where it defaults to
+#                        https://<targetServer>:8000
+#   apiUrl               REST endpoint of the array the volumes live on.
+#                        REQUIRED when any StorageClass server in this release
+#                        is a DNS name, for the same reason: after a DNS flip
+#                        the floating name is the other array, and every RPC
+#                        on the original side would fail to resolve its own
+#                        volume until the class is recreated (class parameters
+#                        are immutable). Optional for IPv4 servers
+#   targetBasePath       directory on the peer the replica lives under; defaults
+#                        to the volume's own parent, so the replica sits at the
+#                        same path on both arrays (recommended: leave unset)
+#   replicationMode      continuous (default) | policy | policy+continuous
+#   linkSnapshotPolicy   "true" replicates the volume's snapshotSchedule policy
+#                        snapshots too; needs a policy mode
+#   schedulingInterval   how often the csi-addons controller polls
+#                        GetVolumeReplicationInfo, which keeps the replication
+#                        metrics current. Not a lag threshold. Default 5m
+#   allowNonEmptyTarget  "true" lets the peer adopt a directory that already
+#                        holds data, which the first job overwrites
+#   replicationScope     volume (default) | group. A shared-subdirectory
+#                        StorageClass has ONE covering export and can only be
+#                        protected as a whole: set group, and one relationship
+#                        is created on the class's basePath with a quota staged
+#                        per volume. A per-PVC VolumeReplication on such a
+#                        class is refused, because one tenant's promote would
+#                        freeze every other tenant's volume. Leave unset for
+#                        dedicated-export classes
+#   secretName           (required) Secret holding the tokens, see above
+#   secretNamespace      namespace of that Secret; defaults to the release namespace
+#
+# The parameters of a VolumeReplicationClass are immutable: a
+# changed mode, scope, allowNonEmptyTarget, apiUrl or targetApiUrl needs a new
+# class name or a delete-and-recreate; a Helm upgrade that edits one in place
+# fails the release.
+volumeReplicationClasses: []
+  # - name: qumulo-to-dr
+  #   targetServer: dr.qumulo.example.com
+  #   targetApiUrl: https://dr.qumulo.example.com:8000   # required: targetServer is a DNS name
+  #   apiUrl: https://prod-array-a.example.com:8000     # required: the StorageClass server is a DNS name
+  #   replicationMode: continuous
+  #   schedulingInterval: 5m
+  #   secretName: qumulo-replication-tokens
+
+# StorageClasses to create. None by default: the paths are cluster-specific and
+# a guessed default would provision into the wrong place.
+#
+# Each entry:
+#   name                 (required) StorageClass name
+#   basePath             (required) cluster filesystem path holding volumes
+#   exportBasePath       NFS export path of that parent; defaults to basePath
+#   server           (required) the Qumulo endpoint nodes mount from, and the
+#                    default REST endpoint. There is no cluster-wide fallback:
+#                    a class without it fails at install
+#   secretName       (required) Secret holding this cluster's API token (key
+#                    "token"), rendered into the standard
+#                    csi.storage.k8s.io/*-secret-name parameters so the sidecars
+#                    pass it per request. There is no cluster-wide token
+#   apiUrl               REST endpoint for that cluster, when it is not
+#                        https://<server>:8000. https:// only: every call
+#                        carries the API token.
+#   secretNamespace      namespace of that Secret; defaults to the release namespace
+#   protocol             nfs3 | nfs4.1 | "" to let the kernel negotiate
+#                        nfs3 mounts use nolock -- the node image runs no
+#                        rpc.statd, so a locking NFSv3 mount fails. The
+#                        default mountOptions include it, and the node adds it
+#                        at mount time when an explicit list names no lock
+#                        option. An explicit "lock" is refused.
+#                        nfs4.1 needs no lock option: it locks in-protocol, and
+#                        a nolock copied from an nfs3 class is accepted and then
+#                        silently ignored. nfs4.1 also negotiates sec=sys on its
+#                        own, so no sec= option is needed even where Kerberos is
+#                        enabled on the cluster.
+#   provisioningModel    shared-subdirectory (default) | dedicated-export
+#   securityFlavor       sys (default behaviour) | krb5 | krb5i | krb5p.
+#                        Makes the export REQUIRE that flavour and the node
+#                        mount with it -- either half alone is useless.
+#                        dedicated-export and protocol nfs4.1 only, and
+#                        refused rather than ignored without them. Also needs
+#                        node.kerberos.enabled plus a host keytab and a
+#                        running rpc.gssd. See the chart README.
+#                        dedicated-export cannot be used on a cluster with
+#                        NFSv4 enabled if any ancestor of basePath is already
+#                        exported: v4 presents one pseudo-filesystem tree, so
+#                        the cluster refuses a nested export. A cluster whose
+#                        "/" is exported therefore rules it out entirely, and
+#                        provisioning fails with FailedPrecondition saying so.
+#   tenantID             attach this class's exports to a Qumulo network
+#                        tenant, by integer id ("4") or by name
+#                        ("tenant-finance"). A tenant is a network namespace:
+#                        the export is reachable only on that tenant's
+#                        networks. Omit to let the cluster use its default
+#                        (tenant 1), which is what every export made before
+#                        this parameter existed already got.
+#   allowedClients       list of IPs and CIDR blocks permitted to mount, e.g.
+#                        [10.0.0.5, 192.168.1.0/24]. Omitted, the export
+#                        admits ANY NFS client that reaches the array, as root
+#                        (no squash), from any port, with no
+#                        authentication: set it to your nodes' addresses. Such a
+#                        class is refused (requireAllowedClients, on by
+#                        default) unless allowAnyClient: true says it is
+#                        meant to be open, or it sets a Kerberos
+#                        securityFlavor.
+#                        Host names are refused: a name resolves at mount time
+#                        on the cluster, so a typo becomes an intermittent
+#                        access failure rather than a failed provision.
+#                        BOTH require provisioningModel: dedicated-export, and
+#                        the chart refuses them otherwise. Under
+#                        shared-subdirectory a volume is a directory beneath an
+#                        export somebody else owns, so there is no per-volume
+#                        export to scope or restrict -- accepting them there
+#                        would report a restriction that is not applied.
+#                        Neither can be changed later: StorageClass parameters
+#                        are immutable, so a different tenant or allowlist
+#                        needs a new class. Existing volumes keep what they
+#                        were created with.
+#   adDomain             nest this class's volumes under a subdirectory named
+#                        for an Active Directory domain, one class per domain.
+#                        LAYOUT ONLY -- it grants and restricts nothing.
+#                        ListVolumes and GetCapacity both account for it: they
+#                        act on basePath/<domain>, which is where this class's
+#                        volumes live. See the chart README.
+#   mountPermissions     octal mode for the volume directory, default 0777, or
+#                        "inherit" to keep the cluster's default. The cluster
+#                        creates a directory owned by the API user at 0755, and
+#                        an NFS client is mapped to another identity, so without
+#                        this a pod cannot write to its own volume.
+#   reclaimPolicy        Delete | Retain
+#   allowVolumeExpansion true | false
+#   isDefault            make this the cluster's default StorageClass
+#   mountOptions         list of NFS mount options. Defaults to
+#                        [hard, timeo=600] (plus nolock for nfs3) when
+#                        omitted -- a "soft" mount
+#                        returns EIO to applications during a Qumulo rolling
+#                        upgrade or node evacuation instead of pausing I/O
+#                        until the array answers again. Set this explicitly
+#                        (e.g. [soft, timeo=600]) to opt out; whatever is set
+#                        here is rendered verbatim, with no "hard" added to it
+#                        (at mount time the node adds only the NFS version
+#                        option and, for nfs3, nolock when no lock option is
+#                        given).
+#                        See the chart README, "Choosing mount options for
+#                        planned maintenance".
+#   allowForeignSnapshotRestore  true lets this class restore a snapshot whose
+#                        name is not "<prefix>-..." (sidecars.snapshotter.
+#                        snapshotNamePrefix) and whose source directory is
+#                        gone -- an imported snapshot an administrator or a
+#                        backup tool took of a tree since deleted. Refused
+#                        otherwise. Default false.
+storageClasses: []
+  # - name: qumulo-nfs
+  #   basePath: /csi/volumes
+  #   exportBasePath: ""
+  #   protocol: nfs4.1
+  #   provisioningModel: shared-subdirectory
+  #   mountPermissions: "0777"
+  #   reclaimPolicy: Delete
+  #   allowVolumeExpansion: true
+  #   isDefault: false
+  #   mountOptions:
+  #     - hard
+  #     - timeo=600
+
+# `helm test` (run it without --logs: a passing test pod is deleted at once,
+# so Helm finds no log to print and exits 1 on a pass). Two tests:
+#
+#   ready   always on. Checks the controller Deployment is Available, every node
+#           pod is Ready, and the kubelet has registered the driver in the
+#           CSINode of each of their nodes. Provisions nothing and calls no
+#           Qumulo cluster, so it passes on any cluster the chart installed on
+#           (chart-verifier's chart-testing run included). Runs as a read-only
+#           ServiceAccount the chart creates (<release>-qumulo-csi-driver-test).
+#   volume  opt-in: set tests.storageClass. A pod with a small generic
+#           ephemeral volume on that class writes a file, reads it back and
+#           removes it, under openshift.controllerSCC on OpenShift (uid 65532
+#           elsewhere), so the class's mountPermissions must let a non-root
+#           user write ("0777", the default, does). It is scheduled with the
+#           node plugin's nodeSelector, tolerations and affinity, because its
+#           mount needs the node plugin on the same node. A pass deletes the
+#           pod and its claim; a failure keeps both for `kubectl logs`.
+#
+# Both test pods run unprivileged: runAsNonRoot, no privilege escalation,
+# every capability dropped, read-only root, RuntimeDefault seccomp.
+tests:
+  ready:
+    enabled: true
+    # Empty: the controller image (image.controller), which runs the check
+    # as `qumulo-csi-driver ready-check` -- so the test pulls nothing the
+    # release does not already run, on OpenShift or anywhere else. Set it only
+    # to a mirror of the controller image: the command is this driver's own.
+    # (Before 0.1.1 the test was a script in ose-cli / origin-cli, images
+    # with CVEs of their own; any value set for that image no longer works.)
+    image: ""
+  # The class the volume test claims from. Empty: no volume test.
+  storageClass: ""
+  # The volume test's claim size.
+  size: 1Gi
+  # The volume test's image: any image with a POSIX shell, cat and sync.
+  # Pinned by tag and multi-arch index digest, like the sidecars.
+  image: registry.access.redhat.com/ubi9/ubi-minimal:9.9@sha256:08d4c70f1baf6537a0728656cf7942d561e74a35916509d205b6519861266352
+  imagePullPolicy: IfNotPresent

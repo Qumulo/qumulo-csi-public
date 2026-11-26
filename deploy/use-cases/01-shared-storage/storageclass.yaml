@@ -1,0 +1,28 @@
+# The StorageClass every use-case page in deploy/use-cases/ builds on.
+#
+# Replace the two placeholders before applying:
+#   <qumulo-cluster-address>              e.g. qumulo.example.com
+#   <path-that-already-exists-and-is-exported>   e.g. /csi/volumes
+#
+# The driver creates volume directories under this path -- it does not create
+# the path itself, and it does not create the NFS export covering it. Both
+# must already exist on the cluster.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-nfs41
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+# An NFS export is reachable from every node the same way, so there is no
+# scheduling decision to defer.
+volumeBindingMode: Immediate
+parameters:
+  server: <qumulo-cluster-address>
+  storeRealPath: <path-that-already-exists-and-is-exported>
+  storeExportPath: <path-that-already-exists-and-is-exported>
+  protocol: nfs4.1
+  csi.storage.k8s.io/provisioner-secret-name: qumulo-api-token
+  csi.storage.k8s.io/provisioner-secret-namespace: qumulo-csi
+  csi.storage.k8s.io/controller-expand-secret-name: qumulo-api-token
+  csi.storage.k8s.io/controller-expand-secret-namespace: qumulo-csi

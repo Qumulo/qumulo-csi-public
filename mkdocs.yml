@@ -72,15 +72,6 @@ markdown_extensions:
 plugins:
   - search
 
-# Engineering notes (docs/engineering/) and dated regression results
-# (docs/regression-results/) are not published here. They are kept out of this
-# repository entirely; these rules stay as a guard so that a stray copy of
-# either directory still cannot reach the built site.
-exclude_docs: |
-  /engineering/
-  /regression-results/
-
-
 nav:
   - Home: index.md
   - Get started:

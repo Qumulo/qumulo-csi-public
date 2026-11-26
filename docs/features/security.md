@@ -219,3 +219,40 @@ Use the names of the policies your cluster actually runs: these are the ones
 the Kyverno pod-security policy set uses. On OpenShift the chart's own SCC
 already admits the node pod (above); a policy engine is a second, separate
 admission check and needs its own exemption.
+
+## Container image vulnerabilities
+
+Every image the chart deploys is pinned by tag and digest, and CI scans them
+all with Trivy. A HIGH or CRITICAL CVE that has a fix fails the build: in the
+two driver images (`image-scan`) and in every third-party image the chart
+pins, the optional sidecars and the helm test's volume image included
+(`make chart-image-scan`). Each driver build also upgrades every package in
+the image to the newest Red Hat errata, so a rebuild picks up fixes without
+waiting for a new UBI base. The `helm test` readiness check runs from the
+controller image, so it adds no image of its own.
+
+Two kinds of finding remain:
+
+- **No fix published yet.** Red Hat lists these as *affected* with no
+  erratum. They clear on the first rebuild after Red Hat ships the fix.
+- **Images held on purpose.** These are listed, each with a reason and an
+  expiry date, in `test/release/image-scan-exceptions.txt`. As of 0.1.1 they
+  are the csi-addons sidecar (v0.15.1) and the external-health-monitor
+  controller. Both are at their latest upstream release, still carry fixable
+  findings in their own Go dependencies, and are off by default.
+
+The node image has seven HIGH findings with no fix as of 0.1.1. All of them
+come from packages that `nfs-utils` pulls in as hard RPM requirements. None
+of them runs: the image's only processes are `tini`, the driver and the
+`mount`/`mount.nfs` helpers it executes.
+
+| Package | Findings | Why it is in the image | Why it is not reachable |
+|---|---|---|---|
+| `sqlite-libs` | 4 (FTS5, sessions, `.recover`) | `nfs-utils` (`nfsdcld`) and `rpm-libs` | no NFS server and no sqlite client runs in the image |
+| `expat` | 1 (external entity DoS) | `python3-libs` and `dbus-broker` (systemd) | nothing in the image parses XML |
+| `cyrus-sasl-lib` | 1 (SRP auth bypass) | `openldap` | no SASL or LDAP service runs or authenticates in the image |
+| `python3-pip-wheel` | 1 (msgpack DoS) | `python3-libs`, which `nfs-utils` requires | no Python program runs in the image |
+
+These packages cannot simply be removed. Dropping them with `--nodeps` would
+leave an RPM database that disagrees with the files, and scanners and Red
+Hat's preflight both read that database.

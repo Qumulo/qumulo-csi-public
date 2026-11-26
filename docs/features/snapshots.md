@@ -1,9 +1,18 @@
 # Snapshots and restore
 
-Point-in-time copies of a volume, taken on the Qumulo cluster, driven from
-Kubernetes.
+Point-in-time copies of a volume, kept on the Qumulo cluster. Two kinds
+matter day to day:
 
-## Turn snapshots on
+- **Kubernetes snapshots** — you create a `VolumeSnapshot`, and restore it
+  into a new PVC. The first half of this page.
+- **Scheduled snapshots** — a StorageClass `snapshotSchedule` takes them on
+  the array; Kubernetes never sees them. See
+  [Snapshots on a schedule](#snapshots-on-a-schedule).
+
+Both are Qumulo snapshots underneath. All four kinds, their names on the
+array and how to tell them apart: [Snapshot a volume](../protect/snapshot.md).
+
+## Turn Kubernetes snapshots on
 
 Snapshots need two things that are not on by default: the snapshot CRDs in
 your cluster, and the snapshotter helper.
@@ -94,7 +103,10 @@ That takes a snapshot each night at 2 am and keeps it a week.
 !!! note "Scheduled snapshots are protected from Kubernetes"
     They are kept on the Qumulo cluster and are deliberately not shown as
     Kubernetes objects, so nobody can delete your backups with `kubectl` by
-    accident. The driver also refuses to delete a policy-created snapshot.
+    accident. The driver also refuses to delete a scheduled snapshot.
+
+    To get data back from one, copy it from the volume's hidden `.snapshot`
+    folder: [Restore from a scheduled snapshot](../protect/restore.md#restore-from-a-scheduled-snapshot).
 
 !!! warning "`tz=` is case-sensitive, and `Local` is refused"
     `UTC` and `Europe/Berlin` work; `utc` does not. `tz=Local` is rejected

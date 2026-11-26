@@ -1,0 +1,275 @@
+# promtool unit tests for the chart's alert rules (make alert-rules-test).
+#
+# rules.yaml is not in the repo: the target extracts it from the rendered
+# chart golden, test/chart/golden/metrics.yaml, so these tests run against
+# the rules exactly as the chart ships them. Each alert has a case that must
+# fire and one that must not.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # --- QumuloCSIArrayUnreachable: the transport only, for 5m ---------------
+  - name: an array that does not answer alerts after five minutes
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_api_reachable{cluster="a.example:8000"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: QumuloCSIArrayUnreachable
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: QumuloCSIArrayUnreachable
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: a.example:8000}
+            exp_annotations:
+              summary: "Qumulo array a.example:8000 is not answering the driver"
+              description: "The driver's last REST call to a.example:8000 failed at the transport: DNS, TCP, TLS or a timeout. Provisioning, expansion and snapshots against every StorageClass naming this array are failing. Check the array, the network path and the certificate chain. The reading is retired once nothing has called the array for an hour, so the alert clears when nothing depends on it any more; it is not a monitor of the array itself -- use Qumulo's own monitoring for that (see docs/reference/metrics.md)."
+
+  # The series is retired an hour after the last call, and the alert
+  # clears with it. A refused credential reads 1, not 0.
+  - name: a retired or merely refusing array does not alert
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_api_reachable{cluster="gone.example:8000"}'
+        values: '0x5 _x20'
+      - series: 'csi_qumulo_api_reachable{cluster="refusing.example:8000"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: QumuloCSIArrayUnreachable
+        exp_alerts: []
+
+  # --- QumuloCSICredentialRejected: any 401 in 10m, for 5m -----------------
+  - name: a rejected token alerts, and clears once the 401s stop
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_api_requests_total{cluster="a.example:8000",method="GET",path_template="/v3/nfs/exports/",status="401"}'
+        values: '0+1x10 10x30'
+      - series: 'csi_qumulo_api_requests_total{cluster="b.example:8000",method="GET",path_template="/v3/nfs/exports/",status="200"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: QumuloCSICredentialRejected
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: a.example:8000}
+            exp_annotations:
+              summary: "Qumulo array a.example:8000 is rejecting a token the driver uses"
+              description: "Calls to a.example:8000 are answered 401: a token in one of the Secrets naming this array has expired or was revoked. Every operation through a StorageClass using it fails. Replace the token in the Secret; the next call uses it."
+      - eval_time: 30m
+        alertname: QumuloCSICredentialRejected
+        exp_alerts: []
+
+  # --- QumuloCSIPrivilegeMissing: any 403 in 10m, for 10m, per route --------
+  - name: a missing privilege alerts per route
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_api_requests_total{cluster="a.example:8000",method="GET",path_template="/v2/replication/source-relationships/status/",status="403"}'
+        values: '0+1x20'
+      # The README lets PRIVILEGE_ANALYTICS_READ be dropped, and the
+      # snapshot-size read is best effort; the driver carries on without
+      # either, so their 403s are not a missing privilege.
+      - series: 'csi_qumulo_api_requests_total{cluster="a.example:8000",method="POST",path_template="/v1/files/resolve",status="403"}'
+        values: '0+1x20'
+      - series: 'csi_qumulo_api_requests_total{cluster="a.example:8000",method="GET",path_template="/v1/files/{id}/aggregates/",status="403"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: QumuloCSIPrivilegeMissing
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: QumuloCSIPrivilegeMissing
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: a.example:8000, path_template: /v2/replication/source-relationships/status/}
+            exp_annotations:
+              summary: "A driver token lacks a privilege on a.example:8000"
+              description: "Calls to /v2/replication/source-relationships/status/ on a.example:8000 are answered 403. The operation's error names the privilege; the chart README's \"Required Qumulo API privileges\" lists the set."
+
+  # --- QumuloCSIProvisioningFailing: by code, for 10m ---------------------
+  - name: CreateVolume failing alerts by code, and succeeding does not
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_rpc_total{method="/csi.v1.Controller/CreateVolume",code="Unavailable"}'
+        values: '0+1x25'
+      - series: 'csi_qumulo_rpc_total{method="/csi.v1.Controller/CreateVolume",code="OK"}'
+        values: '0+5x25'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: QumuloCSIProvisioningFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, code: Unavailable}
+            exp_annotations:
+              summary: "CreateVolume has been failing with Unavailable for ten minutes"
+              description: "PVCs are staying Pending. ResourceExhausted is a restore over the 50,000-entry (files plus directories) / 2 TiB cap; OutOfRange is a restore into a PVC smaller than the snapshot's data (the message names the size to request); Aborted is a restore that ran out of budget and will resume on retry, and is only a problem if it never stops; Unavailable is an array that did not answer, retried by the provisioner; InvalidArgument is a bad StorageClass parameter or volume name; FailedPrecondition is a managed path that does not exist on the array, or a store root that must be created before volumes can be provisioned under it -- an operator action, not a retry; Internal is anything else the driver did not expect, and means the controller log is the only place the cause is written."
+
+  # --- QumuloCSIReplicationRecoveryPointStale: 900 s, or 5400 s for policy --
+  # A healthy hourly policy-mode pair climbs to about an hour every
+  # cycle and must not alert; the same age on a continuous pair must.
+  - name: recovery-point age alerts on the threshold for the relationship's mode
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="cont",role="source"}'
+        values: '1000x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="cont",mode="REPLICATION_CONTINUOUS"}'
+        values: '1x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="policy-ok",role="source"}'
+        values: '3600x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="policy-ok",mode="REPLICATION_SNAPSHOT_POLICY"}'
+        values: '1x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="policy-late",role="source"}'
+        values: '6000x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="policy-late",mode="REPLICATION_SNAPSHOT_POLICY"}'
+        values: '1x20'
+      # Read only from the target, which reports no mode -- a DR-side
+      # controller -- so this controller cannot tell continuous from policy.
+      # The unknown-mode threshold (by default the policy one) applies: an
+      # hour behind is a healthy hourly policy pair, not an alert, and an
+      # end past the threshold still alerts.
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="target-only",role="target"}'
+        values: '3600x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="target-only-late",role="target"}'
+        values: '6000x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: QumuloCSIReplicationRecoveryPointStale
+        exp_alerts:
+          - exp_labels: {severity: warning, relationship_id: cont, role: source}
+            exp_annotations:
+              summary: "Replication cont (source) is 16m 40s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+          - exp_labels: {severity: warning, relationship_id: policy-late, role: source}
+            exp_annotations:
+              summary: "Replication policy-late (source) is 1h 40m 0s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+          - exp_labels: {severity: warning, relationship_id: target-only-late, role: target}
+            exp_annotations:
+              summary: "Replication target-only-late (target) is 1h 40m 0s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+
+  # --- QumuloCSIReplicationRecoveryPointStale: scaled to the schedule -------
+  # With the policy's schedule interval known, the threshold is
+  # 1.5 x the interval, never below the strict one: a daily pair 20 h behind
+  # is healthy, one 1d 14h behind is not, and a target-only end on a 10-minute
+  # schedule alerts at the strict threshold, not the policy fallback.
+  - name: recovery-point age follows the policy's schedule interval when known
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="daily-ok",role="source"}'
+        values: '72000x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="daily-ok",role="target"}'
+        values: '72000x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="daily-ok",mode="REPLICATION_SNAPSHOT_POLICY"}'
+        values: '1x20'
+      - series: 'csi_qumulo_replication_policy_interval_seconds{relationship_id="daily-ok"}'
+        values: '86400x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="daily-late",role="source"}'
+        values: '140000x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="daily-late",mode="REPLICATION_SNAPSHOT_POLICY"}'
+        values: '1x20'
+      - series: 'csi_qumulo_replication_policy_interval_seconds{relationship_id="daily-late"}'
+        values: '86400x20'
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="short-target",role="target"}'
+        values: '1000x20'
+      - series: 'csi_qumulo_replication_policy_interval_seconds{relationship_id="short-target"}'
+        values: '600x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: QumuloCSIReplicationRecoveryPointStale
+        exp_alerts:
+          - exp_labels: {severity: warning, relationship_id: daily-late, role: source}
+            exp_annotations:
+              summary: "Replication daily-late (source) is 1d 14h 53m 20s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+          - exp_labels: {severity: warning, relationship_id: short-target, role: target}
+            exp_annotations:
+              summary: "Replication short-target (target) is 16m 40s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+
+  # --- QumuloCSIReplicationRecoveryPointStale: two controller replicas -------
+  # The csi-addons sidecar elects its own leader, so after a
+  # leadership change the replica that held it keeps exporting the ends and
+  # the interval it last saw until the reconcile retires them. Both pods then
+  # export one relationship's interval, and `group_left` needs its right-hand
+  # side unique per relationship_id -- two matches make the whole expression
+  # error, which silently takes every branch of this alert with it. The
+  # `max by (relationship_id)` around the interval is what keeps it working.
+  - name: a relationship whose interval two controller replicas both export still alerts
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_replication_recovery_point_age_seconds{relationship_id="two-pods",role="source",pod="controller-a"}'
+        values: '140000x20'
+      - series: 'csi_qumulo_replication_mode{relationship_id="two-pods",mode="REPLICATION_SNAPSHOT_POLICY",pod="controller-a"}'
+        values: '1x20'
+      # The same relationship's interval, scraped from both controller pods.
+      - series: 'csi_qumulo_replication_policy_interval_seconds{relationship_id="two-pods",pod="controller-a"}'
+        values: '86400x20'
+      - series: 'csi_qumulo_replication_policy_interval_seconds{relationship_id="two-pods",pod="controller-b"}'
+        values: '86400x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: QumuloCSIReplicationRecoveryPointStale
+        exp_alerts:
+          - exp_labels: {severity: warning, relationship_id: two-pods, role: source, pod: controller-a}
+            exp_annotations:
+              summary: "Replication two-pods (source) is 1d 14h 53m 20s behind"
+              description: "The recovery point of this relationship has not advanced. A failover now would lose everything written since it. Do not wait for the state to change -- the target reports ESTABLISHED with a dead source."
+
+  # --- QumuloCSIVolumeNearQuota: over 90% for 15m ----------------------------
+  - name: a volume over 90% of its quota alerts, one at half does not
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_volume_used_bytes{volume_id="full-id",volume_name="full"}'
+        values: '950x20'
+      - series: 'csi_qumulo_volume_quota_bytes{volume_id="full-id",volume_name="full"}'
+        values: '1000x20'
+      - series: 'csi_qumulo_volume_used_bytes{volume_id="half-id",volume_name="half"}'
+        values: '500x20'
+      - series: 'csi_qumulo_volume_quota_bytes{volume_id="half-id",volume_name="half"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: QumuloCSIVolumeNearQuota
+        exp_alerts:
+          - exp_labels: {severity: warning, volume_id: "full-id", volume_name: full}
+            exp_annotations:
+              summary: "Volume full is near its Qumulo directory quota"
+              description: "Expand the PVC, or writes will start failing with ENOSPC. Note this figure is as fresh as the last controller RPC that read the quota, not a sample -- see docs/reference/metrics.md."
+
+  # --- QumuloCSIVolumeUnprotected: protected == 0 for 10m --------------------
+  - name: an unprotected volume alerts, a protected one does not
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_volume_replication_protected{volume_id="p1-id",volume_name="p1"}'
+        values: '0x20'
+      - series: 'csi_qumulo_volume_replication_protected{volume_id="p2-id",volume_name="p2"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: QumuloCSIVolumeUnprotected
+        exp_alerts:
+          - exp_labels: {severity: warning, volume_id: "p1-id", volume_name: p1}
+            exp_annotations:
+              summary: "Volume p1 has no replication relationship"
+              description: "The driver looked for a replication relationship covering this volume and found none. Its VolumeReplication object may still report Healthy; do not trust it. A failover now has nothing to fail over to."
+
+  # --- QumuloCSIInventoryClassSkipped: credential_usable == 0 for 10m --------
+  # The skip is invisible in the CSI response, so this alert is the whole
+  # containment for the inventory's skip-instead-of-fail. A class that reads 1 must
+  # not fire: that is the normal state of every class in a healthy release.
+  - name: a class left out of the listing alerts, a usable one does not
+    interval: 1m
+    input_series:
+      - series: 'csi_qumulo_inventory_class_credential_usable{class="class-by-hand",cluster="array-a",reason="forbidden"}'
+        values: '0x20'
+      - series: 'csi_qumulo_inventory_class_credential_usable{class="class-helm",cluster="array-a",reason=""}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: QumuloCSIInventoryClassSkipped
+        exp_alerts:
+          - exp_labels: {severity: warning, class: "class-by-hand", cluster: "array-a", reason: "forbidden"}
+            exp_annotations:
+              summary: "StorageClass class-by-hand is being left out of ListVolumes"
+              description: 'The inventory could not build a credential for this class, so its volumes are missing from every ListVolumes answer while this lasts. reason=forbidden: "forbidden" means the class names a Secret this release does not -- add it to rbac.extraSecrets, or set rbac.clusterWideSecrets. "missing" means no such Secret exists. "unusable" means the class names no Secret, or its Secret has no token key.'

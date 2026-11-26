@@ -1,0 +1,103 @@
+{{- if .Values.volumeReplicationClasses }}
+{{- include "qumulo-csi-driver.requireServed" (dict "root" $ "gvk" "replication.storage.openshift.io/v1alpha1/VolumeReplicationClass" "message" (include "qumulo-csi-driver.vrcNotServed" $)) }}
+{{- end }}
+{{- range $vrc := .Values.volumeReplicationClasses }}
+{{- if not $.Values.sidecars.csiAddons.enabled }}
+{{- fail (printf "volumeReplicationClasses[%s]: set sidecars.csiAddons.enabled=true, or nothing will act on these objects" $vrc.name) }}
+{{- end }}
+{{- if not $vrc.name }}
+{{- fail "volumeReplicationClasses[]: name is required" }}
+{{- end }}
+{{- if not $vrc.targetServer }}
+{{- fail (printf "volumeReplicationClasses[%s]: targetServer is required -- the class names the peer array volumes replicate to" $vrc.name) }}
+{{- end }}
+{{- if or (contains "://" (toString $vrc.targetServer)) (contains "/" (toString $vrc.targetServer)) (contains ":" (toString $vrc.targetServer)) }}
+{{- fail (printf "volumeReplicationClasses[%s]: targetServer must be a bare hostname or IPv4 address, got %q -- set targetApiUrl for the REST endpoint" $vrc.name (toString $vrc.targetServer)) }}
+{{- end }}
+{{- if and $vrc.replicationMode (not (has (toString $vrc.replicationMode) (list "continuous" "policy" "policy+continuous"))) }}
+{{- fail (printf "volumeReplicationClasses[%s]: replicationMode must be continuous, policy or policy+continuous, got %q" $vrc.name (toString $vrc.replicationMode)) }}
+{{- end }}
+{{- if and $vrc.replicationScope (not (has (toString $vrc.replicationScope) (list "volume" "group"))) }}
+{{- fail (printf "volumeReplicationClasses[%s]: replicationScope must be volume or group, got %q" $vrc.name (toString $vrc.replicationScope)) }}
+{{- end }}
+{{- if and $vrc.linkSnapshotPolicy (eq (toString ($vrc.replicationMode | default "continuous")) "continuous") }}
+{{- fail (printf "volumeReplicationClasses[%s]: linkSnapshotPolicy needs replicationMode policy or policy+continuous -- a continuous relationship carries no policy snapshots" $vrc.name) }}
+{{- end }}
+{{- /*
+  A DNS name may float between arrays at failover -- the runbook recommends
+  exactly that for the StorageClass server, so pods follow the record -- and
+  the controller must never dial the API at a name that can flip: after the
+  flip it is the other array, and every RPC on the original side then fails
+  to resolve its own volume. So whenever an address is not an IP literal,
+  the fixed REST endpoint beside it is required. The driver checks the same
+  thing (parseReplicationParams, resolve); this fails at install instead of
+  at the first failover.
+*/}}
+{{- $ipv4 := "^([0-9]{1,3}[.]){3}[0-9]{1,3}$" }}
+{{- if and (not (regexMatch $ipv4 (toString $vrc.targetServer))) (not $vrc.targetApiUrl) }}
+{{- fail (printf "volumeReplicationClasses[%s]: targetServer %q is a DNS name, so targetApiUrl is required -- a name can float between arrays at failover, and the controller must dial the peer's REST API at a fixed endpoint (an IP literal, or a per-array name that never moves), e.g. targetApiUrl: https://%s:8000" $vrc.name (toString $vrc.targetServer) (toString $vrc.targetServer)) }}
+{{- end }}
+{{- if not $vrc.apiUrl }}
+{{- range $sc := $.Values.storageClasses }}
+{{- if not (regexMatch $ipv4 (toString $sc.server)) }}
+{{- fail (printf "volumeReplicationClasses[%s]: apiUrl is required because storageClasses[%s].server %q is a DNS name -- if that name floats between arrays at failover the controller would dial the other array's REST API after the flip; set apiUrl to the fixed REST endpoint of the array this class's volumes live on (an IP literal, or a per-array name that never moves), e.g. apiUrl: https://%s:8000" $vrc.name $sc.name (toString $sc.server) (toString $sc.server)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $doc := include "qumulo-csi-driver.replicationClassDoc" (dict "root" $ "vrc" $vrc) }}
+{{- include "qumulo-csi-driver.guardImmutable" (dict "root" $ "kind" "VolumeReplicationClass" "apiVersion" "replication.storage.openshift.io/v1alpha1" "name" $vrc.name "new" (fromYaml $doc) "fields" (list "parameters")) }}
+---
+{{ $doc }}
+{{- end }}
+
+{{- define "qumulo-csi-driver.replicationClassDoc" -}}
+{{- $root := .root -}}
+{{- $vrc := .vrc -}}
+# Supported, opt-in. One class per direction: this one names the peer array. The
+# driver refuses a class whose targetServer is the array a volume lives on.
+apiVersion: replication.storage.openshift.io/v1alpha1
+kind: VolumeReplicationClass
+metadata:
+  name: {{ $vrc.name }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" $root | nindent 4 }}
+  {{- /* Never deleted by Helm; see storageclass.yaml. */}}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  provisioner: {{ $root.Values.driverName }}
+  parameters:
+    targetServer: {{ $vrc.targetServer | quote }}
+    {{- if $vrc.targetApiUrl }}
+    targetApiUrl: {{ $vrc.targetApiUrl | quote }}
+    {{- end }}
+    {{- if $vrc.apiUrl }}
+    apiUrl: {{ $vrc.apiUrl | quote }}
+    {{- end }}
+    {{- if $vrc.targetBasePath }}
+    targetBasePath: {{ $vrc.targetBasePath | quote }}
+    {{- end }}
+    replicationMode: {{ $vrc.replicationMode | default "continuous" | quote }}
+    {{- if $vrc.linkSnapshotPolicy }}
+    linkSnapshotPolicy: "true"
+    {{- end }}
+    # Read by the csi-addons controller to pace its polls. The driver reads it
+    # only to report measured lag as a metric -- lag is never graded, and this
+    # is not a threshold that makes a relationship Degraded.
+    schedulingInterval: {{ $vrc.schedulingInterval | default "5m" | quote }}
+    {{- if $vrc.allowNonEmptyTarget }}
+    allowNonEmptyTarget: "true"
+    {{- end }}
+    {{- if $vrc.replicationScope }}
+    # group protects a shared-subdirectory class as one unit, rooted at its
+    # covering export's path. A per-PVC VolumeReplication on such a class is
+    # refused: one tenant's promote would freeze every other tenant's volume.
+    replicationScope: {{ $vrc.replicationScope | quote }}
+    {{- end }}
+    # The tokens for BOTH arrays, keyed by the host the controller dials. The
+    # csi-addons controller resolves this reference and delivers the Secret's
+    # contents in every RPC's secrets map, so the driver holds no credential.
+{{- $secret := required (printf "volumeReplicationClasses[%s]: secretName is required -- this driver keeps no fallback token" $vrc.name) $vrc.secretName }}
+    replication.storage.openshift.io/replication-secret-name: {{ $secret | quote }}
+    replication.storage.openshift.io/replication-secret-namespace: {{ $vrc.secretNamespace | default $root.Release.Namespace | quote }}
+{{- end -}}

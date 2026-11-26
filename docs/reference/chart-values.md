@@ -24,14 +24,14 @@ Release-wide settings, set as Helm values. Per-volume settings are
 
 | Value | Type | Default | Description |
 |---|---|---|---|
-| `image.controller.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | |
+| `image.controller.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | set it only for your own registry or mirror |
 | `image.controller.tag` | string | the chart's `appVersion` | may carry `@sha256:<digest>` |
-| `image.node.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | |
+| `image.node.repository` | string | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | set it only for your own registry or mirror |
 | `image.node.tag` | string | the chart's `appVersion` | |
-| `image.pullSecrets` | list | `[]` | `[{name: ghcr-pull}]` |
+| `image.pullSecrets` | list | `[]` | the published images are public; set this only for a private registry or mirror |
 
 !!! tip "Pin the digest for a reproducible install"
-    `tag: "0.1.0@sha256:<digest>"`. A locally built image has no registry in
+    `tag: "0.1.1@sha256:<digest>"`. A locally built image has no registry in
     its name, so set `repository` to the bare name.
 
 ## Qumulo API
@@ -58,11 +58,13 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | `controller.leaderElectionTimings` | map | `{}` | `leaseDuration`, `renewDeadline`, `retryPeriod`; unset keeps the sidecars' 15s/10s/5s |
 | `controller.logLevel` | string | `info` | `debug` for diagnosis |
 | `controller.podDisruptionBudget.enabled` | bool | `true` | `maxUnavailable: 1`, rendered only with >1 replica |
-| `controller.strategy` | map | `{}` | verbatim; `Recreate` when leader election is off |
+| `controller.strategy` | map | `{}` | verbatim; `Recreate` when leader election is off; `maxSurge: 0` with `hostNetwork` |
+| `controller.hostNetwork` | bool | `false` | run the controller on the node's network, for arrays reachable only from the nodes' own routes; see [Arrays reachable only from the nodes](../get-started/openshift.md#arrays-reachable-only-from-the-nodes) |
+| `controller.dnsPolicy` | string | `""` | empty: `ClusterFirstWithHostNet` with `hostNetwork`, else Kubernetes' default |
 | `controller.topologySpreadConstraints` | list | `[]` | verbatim |
 | `controller.resources`, `controller.sidecarResources` | map | driver 1Gi, each sidecar 128Mi; memory limit = request, ephemeral-storage limit 500Mi | no CPU limit; see `values.yaml` for the sizing |
 | `controller.priorityClassName` | string | `system-cluster-critical` | |
-| `controller.nodeSelector`, `tolerations`, `affinity` | | `{}`/`[]` | the default affinity is a soft hostname anti-affinity |
+| `controller.nodeSelector`, `tolerations`, `affinity` | | `{}`/`[]` | the default affinity is a soft hostname anti-affinity, a required one with `hostNetwork` |
 | `controller.terminationGracePeriodSeconds` | int | `90` | |
 | `controller.podSecurityContext`, `securityContext` | map | non-root | |
 | `controller.inventory.enabled` | bool | `false` | `ListVolumes`, `ControllerGetVolume` |
@@ -73,7 +75,7 @@ Release-wide settings, set as Helm values. Per-volume settings are
 
 | Value | Type | Default | Description |
 |---|---|---|---|
-| `node.kubeletDir` | path | `/var/lib/kubelet` | **non-default on k3s and microk8s** |
+| `node.kubeletDir` | path | `/var/lib/kubelet` | **MicroK8s uses `/var/snap/microk8s/common/var/lib/kubelet`** |
 | `node.logLevel` | string | `info` | |
 | `node.unmountTimeout` | duration | `""` → 30s | how long a plain `umount(8)` is given before escalating |
 | `node.minReadySeconds` | int | `10` | |
@@ -111,7 +113,16 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | `sidecars.snapshotter.snapshotNamePrefix` | `snapshot` | passed to **both** the sidecar and the driver |
 | `sidecars.capacity.enabled` | `false` | `CSIStorageCapacity` per class |
 | `sidecars.csiAddons.enabled` | `false` | replication |
-| `sidecars.healthMonitor.enabled` | `false` | polls `ControllerGetVolumeHealth`; needs inventory |
+| `sidecars.healthMonitor.enabled` | `false` | polls `ControllerGetVolumeHealth`; needs `controller.inventory.enabled`. **Leave off on 1.35 and 1.36**: the claim field it writes is alpha and exists only on Kubernetes 1.37 — see [Optional: inventory and health](../operate/observe.md#optional-inventory-and-health) |
+
+!!! note "Sidecar images are pinned by tag and digest"
+    Each `sidecars.*.image` default is `<name>:<tag>@sha256:<digest>`. The
+    tag says which release it is; the digest fixes the exact image, which a
+    tag alone does not. To use a mirror, set the whole image string. Keep the
+    digest only if the mirror copied the whole multi-arch index
+    (`skopeo copy --all`, `crane copy`); otherwise use the mirror's own digest
+    or just `<name>:<tag>`. The chart refuses an image with no tag and no
+    digest, and the tag `latest`.
 
 !!! warning "Do not change `snapshotNamePrefix` on a release that has snapshots"
     It is how the driver recognises the snapshots it took; existing ones would
@@ -142,6 +153,10 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | `metrics.prometheusRule.unknownModeRecoveryPointAgeSeconds` | int | the policy threshold | for a DR-side controller that cannot see the mode |
 | `metrics.prometheusRule.policyIntervalFactor` | float | `1.5` | × the measured policy interval, when known |
 | `metrics.prometheusRule.volumeNearQuotaRatio` | float | `0.9` | |
+| `metrics.dashboard.enabled` | bool | `false` | the Grafana dashboard as a ConfigMap; needs `metrics.enabled` |
+| `metrics.dashboard.namespace` | string | release namespace | `openshift-config-managed` for the OpenShift console |
+| `metrics.dashboard.labels` | map | `{grafana_dashboard: "1"}` | what the importer selects on; `console.openshift.io/dashboard: "true"` for OpenShift |
+| `metrics.dashboard.annotations` | map | `{}` | e.g. `grafana_folder` |
 
 !!! warning "The node metrics port is a host port"
     The node DaemonSet is `hostNetwork: true`. 29652 and `node.healthPort`
@@ -167,8 +182,10 @@ Release-wide settings, set as Helm values. Per-volume settings are
 | Value | Type | Default | Description |
 |---|---|---|---|
 | `openshift.enabled` | `auto`, `true`, `false` | `auto` | `auto` turns on when the cluster serves `SecurityContextConstraints`; set `true` for `helm template` and GitOps |
-| `openshift.controllerSCC` | string | `restricted-v2` | the SCC the controller pods and the `helm test` pods are pinned to, for example your own `restricted-csi` |
-| `openshift.assignControllerUID` | `auto`, `true`, `false` | `auto` | leave the controller's fixed uid out so OpenShift assigns one from the namespace range. `auto`: when `controllerSCC` starts with `restricted`; `true`: always (a custom SCC with another name that assigns a uid); `false`: never (an SCC that lets the pod choose, such as `nonroot-v2`) |
+| `openshift.controllerSCC` | string | `""` → `restricted-v2`, or `hostnetwork-v2` with `controller.hostNetwork` | the SCC the controller pods (and, without `hostNetwork`, the `helm test` pods) are pinned to, for example your own `restricted-csi` |
+| `openshift.controllerSCCRole` | string | `""` → `system:openshift:scc:<controllerSCC>` | with `controller.hostNetwork`, the ClusterRole bound to the controller service account so it may use `controllerSCC`; name your own for a custom SCC |
+| `openshift.testSCC` | string | `""` → `controllerSCC`, or `restricted-v2` with `controller.hostNetwork` | the SCC the `helm test` pods are pinned to |
+| `openshift.assignControllerUID` | `auto`, `true`, `false` | `auto` | leave the controller's fixed uid out so OpenShift assigns one from the namespace range. `auto`: when `controllerSCC` starts with `restricted` or `hostnetwork`; `true`: always (a custom SCC with another name that assigns a uid); `false`: never (an SCC that lets the pod choose, such as `nonroot-v2`) |
 | `openshift.nodeSCC.create` | bool | `true` | the chart makes the node SCC and grants it to the node service account only |
 | `openshift.nodeSCC.name` | string | `""` → `<namespace>-<release>-qumulo-csi-driver-node`, or `<release>-qumulo-csi-driver-node` when the release is named after its namespace | with `create: false`, the name of an SCC your cluster admin made |
 | `openshift.trustedCABundle` | bool | `false` | trust the cluster's injected CA bundle for the Qumulo API; not with `qumulo.caBundle` or `insecureSkipTlsVerify` |
@@ -180,10 +197,10 @@ See [Install on OpenShift](../get-started/openshift.md).
 | Value | Type | Default | Description |
 |---|---|---|---|
 | `tests.ready.enabled` | bool | `true` | the readiness test and its read-only ServiceAccount and RBAC |
-| `tests.ready.image` | string | `""` → `ose-cli-rhel9:v4.22` on OpenShift, `origin-cli:4.22` elsewhere | needs bash and kubectl |
+| `tests.ready.image` | string | `""` → the controller image | a mirror of the controller image; the test runs `qumulo-csi-driver ready-check` |
 | `tests.storageClass` | string | `""` | turns on the volume test, on this class |
 | `tests.size` | quantity | `1Gi` | the volume test's claim size |
-| `tests.image` | string | `registry.access.redhat.com/ubi9/ubi-minimal:9.8` | the volume test's image: a POSIX shell, `cat` and `sync` |
+| `tests.image` | string | `registry.access.redhat.com/ubi9/ubi-minimal:9.9@sha256:…` | the volume test's image: a POSIX shell, `cat` and `sync` |
 | `tests.imagePullPolicy` | `Always`, `IfNotPresent`, `Never` | `IfNotPresent` | |
 
 The readiness test checks the controller is Available, every node pod is Ready

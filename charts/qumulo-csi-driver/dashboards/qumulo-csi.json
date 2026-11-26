@@ -1,0 +1,1264 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Qumulo CSI driver (csi.qumulo.com). Read docs/reference/metrics.md before building an alert on anything here: the driver holds no standing connection to any array (ARCHITECTURE.md Rule 0), so every array-side figure is the last value an RPC produced, not a sample.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Is anything broken right now",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "singlestat",
+      "title": "Arrays reachable",
+      "description": "1 when the driver's LAST REST call to that array got a usable answer; 0 on a transport failure or a 401/403. Last observed, NOT sampled -- an idle controller's value is as old as its last request, so 0 is a real alarm and 1 is not proof the array is up. Probe deliberately carries no array signal. Shows the LOWEST value over the selected arrays: UNREACHABLE if any one is down; the 'API calls by status' panel shows which.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min(csi_qumulo_api_reachable{cluster=~\"$cluster\"})",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "valueName": "current",
+      "format": "none",
+      "decimals": 0,
+      "mappingType": 1,
+      "valueMaps": [
+        {
+          "op": "=",
+          "value": "0",
+          "text": "UNREACHABLE"
+        },
+        {
+          "op": "=",
+          "value": "1",
+          "text": "all reachable"
+        },
+        {
+          "op": "=",
+          "value": "null",
+          "text": "no data"
+        }
+      ],
+      "colorBackground": true,
+      "colorValue": false,
+      "thresholds": "1,1",
+      "colors": [
+        "#d44a3a",
+        "#d44a3a",
+        "#299c46"
+      ],
+      "sparkline": {
+        "show": false
+      },
+      "options": {
+        "fieldOptions": {
+          "thresholds": [
+            {
+              "color": "red",
+              "value": -1
+            },
+            {
+              "color": "green",
+              "value": 0.5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "graph",
+      "title": "Failing RPCs",
+      "description": "Non-OK CSI and csi-addons RPCs per second, by method and gRPC code. Aborted on a restore is normal -- the restore ran out of budget and resumes on retry -- and is only a problem if it never stops.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (method, code) (rate(csi_qumulo_rpc_total{code!=\"OK\"}[5m]))",
+          "legendFormat": "{{method}} {{code}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Build",
+      "description": "One row per running driver instance.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "csi_qumulo_build_info",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "CSI RPCs",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "graph",
+      "title": "RPC rate by method",
+      "description": "Every CSI and csi-addons RPC this driver served.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (method) (rate(csi_qumulo_rpc_total[5m]))",
+          "legendFormat": "{{method}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 7,
+      "type": "graph",
+      "title": "RPC latency, p99 and p50",
+      "description": "From the driver's own histogram: ONE attempt. The sidecars' csi_sidecar_operations_seconds covers every attempt plus the backoff between them, and a provisioning problem usually shows there first.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, method) (rate(csi_qumulo_rpc_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{method}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le, method) (rate(csi_qumulo_rpc_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{method}}",
+          "refId": "B"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Qumulo REST API -- is the array slow, or is Kubernetes?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "graph",
+      "title": "API calls by status",
+      "description": "status=\"transport\" means the array never answered at all -- DNS, TCP, TLS or timeout. A 401 proves the array is up and the credential is not.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (cluster, status) (rate(csi_qumulo_api_requests_total{cluster=~\"$cluster\"}[5m]))",
+          "legendFormat": "{{cluster}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 10,
+      "type": "graph",
+      "title": "API errors and transport failures",
+      "description": "Everything that is not a 2xx, which is the series to watch when PVCs stop binding.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (cluster, status, path_template) (rate(csi_qumulo_api_requests_total{cluster=~\"$cluster\",status!~\"2..\"}[5m]))",
+          "legendFormat": "{{cluster}} {{status}} {{path_template}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "reqps",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 11,
+      "type": "graph",
+      "title": "API latency p99 by endpoint",
+      "description": "Labelled by path template, never by a formatted path: one series per volume would be a cardinality bomb.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, cluster, path_template) (rate(csi_qumulo_api_duration_seconds_bucket{cluster=~\"$cluster\"}[5m])))",
+          "legendFormat": "{{cluster}} {{path_template}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Capacity and quotas",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "graph",
+      "title": "Array free space",
+      "description": "From GetCapacity. Cluster-wide, not per class: a Qumulo directory quota is a logical limit with no pool of space behind it. Updates only when csi-provisioner polls GetCapacity, which needs sidecars.capacity.enabled.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "csi_qumulo_cluster_free_bytes{cluster=~\"$cluster\"}",
+          "legendFormat": "free {{cluster}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "csi_qumulo_cluster_capacity_bytes{cluster=~\"$cluster\"}",
+          "legendFormat": "total {{cluster}}",
+          "refId": "B"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "bytes",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 14,
+      "type": "graph",
+      "title": "Volumes nearest their quota",
+      "description": "Used over limit, from the array's own view of the directory quota -- not kubelet's view of the mount. As fresh as the last controller RPC that read that volume's quota, and absent entirely for a volume nothing has asked about since the controller started. Turn on controller.inventory.enabled and ListVolumes populates them all at once.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, csi_qumulo_volume_used_bytes / csi_qumulo_volume_quota_bytes)",
+          "legendFormat": "{{volume_name}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "percentunit",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Replication -- RPO",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "graph",
+      "title": "Recovery-point age (how much a failover would lose)",
+      "description": "THE replication health signal. Measured on the array's own clock, computed at scrape time. Alert on this and not on state: a target array reported ESTABLISHED with no error for 25 minutes while its source was dead. A relationship that has never completed a job has no series here at all -- zero would be the most dangerous possible lie.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 14,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "csi_qumulo_replication_recovery_point_age_seconds",
+          "legendFormat": "{{relationship_id}} ({{role}})",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Reported state",
+      "description": "What each end of the relationship believes. Description, not alarm -- see the panel to the left. Two series for one relationship means its two ends disagree.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 14,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "csi_qumulo_replication_state",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 18,
+      "type": "graph",
+      "title": "Snapshots queued to replicate",
+      "description": "A number that climbs and does not fall is a source that cannot keep up.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 19,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "csi_qumulo_replication_queued_snapshots",
+          "legendFormat": "{{relationship_id}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 22,
+      "type": "table",
+      "title": "Volumes without protection",
+      "description": "Volumes the driver looked for a replication relationship on and found none (csi_qumulo_volume_replication_protected == 0), the QumuloCSIVolumeUnprotected condition. Trust this over the VolumeReplication object. Set only by GetVolumeReplicationInfo: a volume whose VolumeReplication was deleted keeps its last reading. See docs/reference/metrics.md.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "csi_qumulo_volume_replication_protected == 0",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Sidecars and process",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "graph",
+      "title": "Sidecar operation latency p99",
+      "description": "csi_sidecar_operations_seconds: how long the SIDECAR waited, its own retries included. Scraped because metrics.enabled gives provisioner, resizer and snapshotter --http-endpoint.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, method_name, driver_name) (rate(csi_sidecar_operations_seconds_bucket[5m])))",
+          "legendFormat": "{{driver_name}} {{method_name}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 21,
+      "type": "graph",
+      "title": "Driver memory (RSS)",
+      "description": "Resident memory of each driver container (controller and node), the first question after a restart. Only containers that export csi_qumulo_build_info are shown, not every process in the cluster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 47
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "process_resident_memory_bytes and on (job, instance) csi_qumulo_build_info",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "bytes",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    },
+    {
+      "id": 23,
+      "type": "graph",
+      "title": "Driver goroutines",
+      "description": "Goroutines in each driver container. A count that only grows points at a leak. Only containers that export csi_qumulo_build_info are shown.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 47
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "go_goroutines and on (job, instance) csi_qumulo_build_info",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "lines": true,
+      "linewidth": 1,
+      "fill": 1,
+      "points": false,
+      "bars": false,
+      "stack": false,
+      "nullPointMode": "null",
+      "legend": {
+        "show": true,
+        "values": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "avg": false,
+        "total": false
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "mode": "time",
+        "show": true
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "show": true,
+          "logBase": 1,
+          "min": 0
+        },
+        {
+          "format": "short",
+          "show": false,
+          "logBase": 1
+        }
+      ],
+      "aliasColors": {},
+      "seriesOverrides": []
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "qumulo",
+    "csi",
+    "storage"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(csi_qumulo_api_requests_total, cluster)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Qumulo array",
+        "multi": true,
+        "name": "cluster",
+        "options": [],
+        "query": {
+          "query": "label_values(csi_qumulo_api_requests_total, cluster)",
+          "refId": "A"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Qumulo CSI driver",
+  "uid": "qumulo-csi-driver",
+  "version": 1,
+  "weekStart": ""
+}

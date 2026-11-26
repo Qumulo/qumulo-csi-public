@@ -1,0 +1,25 @@
+# Captured shape of /proc/self/mountinfo as the node plugin's driver container sees it on an
+# OpenShift Container Platform 4.22 RHCOS worker (CRI-O, not containerd). Only the lines the
+# forced-unmount ladder reads are kept; the host's own mounts are trimmed.
+#
+# What matters here, and what differs from a containerd node:
+#
+#   * the two NFS volumes below share one superblock -- major:minor 0:357 -- because they are the
+#     same server with the same options. `umount -f` on one aborts in-flight I/O for both.
+#   * CRI-O writes the container's mounts under /var/lib/containers/storage/overlay-containers/...
+#     rather than containerd's /run/containerd/... , and the overlay root is a *different* device.
+#     A parser that matched on the source string rather than on major:minor would read this file
+#     and find no sharers.
+#   * the kubelet's pods directory propagates in as a shared peer group (shared:NNN), which is what
+#     makes the bidirectional hostPath mount work at all.
+#
+# Comment lines are stripped by the test before parsing; mountinfo itself has no comments.
+22 96 0:21 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw,seclabel
+25 96 0:5 / /proc rw,nosuid,nodev,noexec,relatime shared:14 - proc proc rw
+96 61 259:4 / / rw,relatime shared:1 - xfs /dev/sda4 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota
+612 96 0:44 / /var/lib/kubelet rw,relatime shared:312 - xfs /dev/sda4 rw,seclabel,attr2,inode64,prjquota
+688 612 0:357 /csi/volumes/pvc-a /var/lib/kubelet/pods/pod-a/volumes/kubernetes.io~csi/pvc-a/mount rw,relatime shared:401 - nfs4 192.0.2.10:/csi/volumes/pvc-a rw,vers=4.2,rsize=1048576,wsize=1048576,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=10.0.128.4,local_lock=none,addr=192.0.2.10
+702 612 0:357 /csi/volumes/pvc-b /var/lib/kubelet/pods/pod-b/volumes/kubernetes.io~csi/pvc-b/mount rw,relatime shared:401 - nfs4 192.0.2.10:/csi/volumes/pvc-b rw,vers=4.2,rsize=1048576,wsize=1048576,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=10.0.128.4,local_lock=none,addr=192.0.2.10
+733 612 0:412 /csi/volumes/pvc-c /var/lib/kubelet/pods/pod-c/volumes/kubernetes.io~csi/pvc-c/mount rw,relatime shared:433 - nfs4 198.51.100.20:/csi/volumes/pvc-c rw,vers=4.2,rsize=1048576,wsize=1048576,hard,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=10.0.128.4,local_lock=none,addr=198.51.100.20
+819 96 0:239 / /var/lib/containers/storage/overlay-containers/9f2c/userdata/shm rw,nosuid,nodev,noexec,relatime shared:488 - tmpfs shm rw,seclabel,size=65536k
+824 96 0:241 / /run/secrets/kubernetes.io/serviceaccount ro,relatime - tmpfs tmpfs rw,seclabel,size=4096k

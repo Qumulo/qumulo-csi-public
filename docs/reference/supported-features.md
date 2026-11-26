@@ -41,9 +41,9 @@ See [Install on OpenShift](../get-started/openshift.md).
 | Deletion | Tree-delete plus quota, export and policy cleanup. |
 | Online expansion | Quota change only — no unmount, no pod restart, no node-side step. |
 | Quota enforcement | A Qumulo directory quota is a firm limit **over time**, not an instantaneous one. A fast writer can run past it briefly before the array answers `Disk quota exceeded` — measured at about 3.5 GiB of overshoot on a 1 GiB volume written at 336 MB/s, consistently across all four storage-class shapes. The driver sets the quota correctly and is not in the data path once a volume is mounted. Size volumes with that headroom in mind rather than relying on the quota as a hard instantaneous cap. |
-| Idempotent create | A retry after a timeout or restart adopts and completes the earlier attempt rather than duplicating it. **A create cut between making the directory and setting its quota is resumed by the retry**: the retry finds the directory already there and empty with no quota, recognises it as its own interrupted attempt, and finishes it — same directory, quota and export. This holds wherever the create was cut, including when the provisioner disconnects mid-call. The one directory a retry will **not** adopt is a quota-less one that already **holds data**: that is a name collision with somebody else's files rather than an interrupted create, so it is refused with `already exists` and the data is left untouched. Give that volume a different name, or move the data aside. |
+| Idempotent create | A retry after a timeout or restart adopts and completes the earlier attempt rather than duplicating it. A create cut between making the directory and setting its quota (a controller restart, eviction or lost lease) is finished by the retry: an **empty** directory with no quota at exactly the volume's path is taken as this driver's own interrupted create, and the retry sets its mode and quota and carries on (fixed in 0.1.0). A directory at that path that holds anything and has no quota was not made by this driver; it is never adopted, and the claim fails `already exists` until an administrator moves it away. |
 | Idempotent delete | A volume counts as deleted only when the cluster itself reports it absent, and a PV is never dropped while its directory still exists — **except for a handle this driver cannot parse**, which `DeleteVolume` answers OK without touching the array, because there is nothing it could safely act on and refusing would strand the PV forever. Such a handle's directory is left on the array. |
-| Rollback on partial failure | A `CreateVolume` that fails after some array state exists unwinds what it made where it can. Where the unwind cannot run — the call was cancelled, or the controller stopped — a directory can be left behind with no quota; the next retry adopts and finishes it rather than failing on it, as above. |
+| Rollback on partial failure | A `CreateVolume` that fails after some array state exists unwinds what it made where it can. Rollbacks run on a context of their own (an 8 s budget inside the 10 s shutdown grace), so a controller stopping mid-create still removes what it made; a rollback that never runs leaves an empty directory with no quota, which the next retry finishes. |
 | Volume name validation | Names containing `#`, `/` or NUL, and the names `.` and `..`, are refused before any array call. |
 | Delete of a protected volume | Refused by default if the volume **is** a replication source or replica. The guard matches the relationship's own root, so it is not a full containment check: a handle naming a *parent* of a protected root — a directory that merely **contains** a relationship — is not checked against that relationship and is not refused on its account. Use `Retain` and the PV-ownership guard rather than relying on this to stop a delete above a protected tree. |
 | Deletion of a replicated volume | Refused by default if the volume is a replication source or replica, naming the relationship and the remedy. `replicationDeletePolicy: disable` removes both ends first — peer end first, so an unreachable peer is found before anything is dismantled. Verified live. |
@@ -69,9 +69,9 @@ See [Install on OpenShift](../get-started/openshift.md).
 
 | Capability | Detail |
 |---|---|
-| Create, delete and list | Qumulo snapshots driven from Kubernetes. Sidecar is opt-in (`sidecars.snapshotter.enabled`). |
+| Create, delete and list | Kubernetes snapshots (`VolumeSnapshot`): Qumulo snapshots driven from Kubernetes. Sidecar is opt-in (`sidecars.snapshotter.enabled`). |
 | Restore to a new volume | Resumable across attempts: a later attempt skips subtrees an earlier one finished, and a part-copied file resumes where it stopped. |
-| Scheduled snapshots (`snapshotSchedule`) | Attaches a Qumulo snapshot policy per volume. These are deliberately **not** surfaced as `VolumeSnapshot` objects, so `kubectl delete` cannot destroy a scheduled backup, and `DeleteSnapshot` refuses a policy-created snapshot. |
+| Scheduled snapshots (`snapshotSchedule`) | Attaches a Qumulo snapshot policy per volume. These are deliberately **not** surfaced as `VolumeSnapshot` objects, so `kubectl delete` cannot destroy a scheduled backup, and `DeleteSnapshot` refuses a scheduled snapshot. Restored by copying from the volume's `.snapshot` folder — [Restore from a scheduled snapshot](../protect/restore.md#restore-from-a-scheduled-snapshot). |
 | Restore under `adDomain` | Staging and rename happen inside the domain directory; no leftovers in the parent. |
 | Reported snapshot size | A snapshot taken immediately after a large write can be reported by the array far smaller than the data it holds — 24 KiB for about 1.2 GB in testing — because the figure has not settled. The capacity check on a restore uses that figure, so a restore into a claim smaller than the real content is **accepted**, and the new volume then exceeds its own quota. The restored data itself is correct and complete. Size a restore claim from the **source volume**, not from the snapshot's reported size. |
 
@@ -91,8 +91,9 @@ See [Install on OpenShift](../get-started/openshift.md).
 
 ## 5. Replication and disaster recovery
 
-> **Everything in this section is opt-in** via `sidecars.csiAddons.enabled`,
-> and exercised with live runs against a Qumulo array pair in both directions.
+> **Supported, opt-in.** Everything in this section is off until you set
+> `sidecars.csiAddons.enabled`, and is exercised with live runs against a
+> Qumulo array pair in both directions.
 > The delete and expand guards in §1 are not opt-in: they apply even when
 > replication is disabled.
 
@@ -105,7 +106,24 @@ See [Install on OpenShift](../get-started/openshift.md).
 | Pre-stage | Enable pre-stages the replica's export read-only and its quota while the target is still read-only, so a replica is never reachable read-write before a promote. **Re-enabling after a plain Disable is refused, not working:** a Disable leaves the DR covering export read-write, and the next Enable finds a read-write export it did not make and refuses rather than re-protecting over it, so the volume stays unprotected until the export is set read-only by hand. Only an Enable that re-protects a copy unchanged since the Disable that marked it unpromoted is allowed through. |
 | Group replication (`replicationScope: group`) | One relationship covering a class's `basePath`, with a quota per member volume and one promote for the group. A group root of `/` is refused in every form. |
 | Health and RPO reporting (`Info`) | Grades relationship state, job error, queued snapshots, split brain and peer reachability, and reports replication lag. Two writable copies is reported as an error. |
-| `qumulo-csi-repoint` | A separate binary that repoints DNS-named claims and restarts pods after a failover. |
+| `qumulo-csi-repoint` (**Preview**) | A separate tool that repoints DNS-named claims and restarts pods after a failover. It is not shipped in a release image: run it from a source checkout (`go run ./cmd/qumulo-csi-repoint`). |
+| After a failover, the old PV | A PV's handle records the array that created it, so after a failover its expand, snapshot and delete still go to the old source, even when `server` is a name that moved. They are **refused** (`FailedPrecondition`, nothing changed), with a message naming the way out: demote the old side, or re-point the claim to the DR array with `qumulo-csi-repoint`. Verified live. |
+
+**Known limits.** Each is deliberate or a limit of the platform, and each has a
+way round it:
+
+- **Re-enable after a plain Disable is refused** while the DR share is
+  read-write (see Pre-stage above). Set that share read-only, then Enable.
+- **A frozen source silently drops appends.** Quiesce workloads before a
+  planned promote — see [Replicate](../protect/replicate.md).
+- **`replicationDeletePolicy` never deletes the DR copy.** `refuse` (the
+  default) refuses the delete; `disable` removes the relationship on both
+  arrays and deletes the source only. Remove the replica on the peer by hand.
+- **Group `Info` needs the group id.** csi-addons sends no parameters on
+  `Info`, so a member volume's own `Info` reports the member, not the group.
+- **A misspelled replication key in the Secret is ignored**, falling back to
+  the safe default (`refuse`), because a Secret also holds keys the driver
+  does not know.
 
 ## 6. Security
 
@@ -132,4 +150,4 @@ See [Install on OpenShift](../get-started/openshift.md).
 |---|---|
 | Per-volume capacity metrics | Via the kubelet — existing dashboards and alerts work with no additional configuration. |
 | Driver `/metrics` endpoint | Per-RPC counters and latency, Qumulo API counters and latency, per-array reachability, per-volume quota and usage, array capacity, replication RPO, and sidecar metrics. |
-| `Service`, `ServiceMonitor` and Grafana dashboard | Shipped with the chart, behind a flag. |
+| `Service`, `ServiceMonitor`, `PrometheusRule` and Grafana dashboard | Shipped with the chart, each behind its own flag. |

@@ -1,0 +1,25 @@
+{{- if and .Values.metrics.enabled .Values.metrics.dashboard.enabled }}
+# The Grafana dashboard, for an importer that discovers ConfigMaps by label:
+# the Grafana sidecar of kube-prometheus-stack (grafana_dashboard: "1", the
+# default) or the OpenShift console (namespace openshift-config-managed,
+# console.openshift.io/dashboard: "true"). The JSON is dashboards/qumulo-csi.json
+# in this chart, verbatim; it has a datasource variable, so nothing in it names
+# a particular Prometheus.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qumulo-csi-driver.fullname" . }}-dashboard
+  namespace: {{ .Values.metrics.dashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    {{- with .Values.metrics.dashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.dashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  qumulo-csi.json: |-
+    {{- .Files.Get "dashboards/qumulo-csi.json" | nindent 4 }}
+{{- end }}

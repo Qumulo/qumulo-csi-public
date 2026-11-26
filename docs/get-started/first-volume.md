@@ -26,7 +26,9 @@ claims and pods without involving you.
 ## 1. Give the driver a token
 
 The driver logs in to Qumulo with an API token, kept in a Kubernetes Secret.
-You need one Secret per Qumulo cluster, with the token under the key `token`:
+You need one Secret per Qumulo cluster, with the token under the key `token`.
+Skip this if you already created it in
+[Prerequisites](prerequisites.md#secure-access):
 
 ```bash
 kubectl -n qumulo-csi create secret generic qumulo-api-token \
@@ -48,7 +50,7 @@ The storage class is how you tell Kubernetes where the Qumulo cluster is.
 Add it to the values file you installed with, then upgrade:
 
 ```yaml
-# qumulo-values.yaml -- add this section
+# values.yaml -- add this section
 storageClasses:
   - name: qumulo-nfs                 # <-- EDIT (the name people will ask for)
     server: qumulo.example.com       # <-- EDIT (host name or IP; no https://, no port)
@@ -64,9 +66,9 @@ storageClasses:
 
 ```bash
 helm upgrade qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> \
+  --version 0.1.1 \
   --namespace qumulo-csi \
-  --values qumulo-values.yaml
+  --values values.yaml
 ```
 
 Nothing restarts — the upgrade just adds the storage class.
@@ -76,7 +78,7 @@ kubectl get storageclass qumulo-nfs
 ```
 
 !!! warning "Always pass your full values file"
-    Use `-f qumulo-values.yaml` on every upgrade. Running `helm upgrade --set`
+    Use `-f values.yaml` on every upgrade. Running `helm upgrade --set`
     on its own resets every other setting back to the chart's default.
 
 !!! warning "Delete the `[]` when you add classes"
@@ -127,7 +129,9 @@ kubectl get pvc my-data
 ```
 
 Within a few seconds it should say `Bound`. That means the driver has created
-a folder on the Qumulo cluster with a 10 GiB limit on it.
+a folder on the Qumulo cluster with a 10 GiB Qumulo quota on it. The array
+enforces a quota over time rather than at the instant of each write, so a fast
+writer can briefly exceed it.
 
 !!! note "If it stays `Pending`"
     `kubectl describe pvc my-data` and read the events at the bottom — the

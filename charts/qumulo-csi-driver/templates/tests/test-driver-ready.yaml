@@ -1,0 +1,99 @@
+{{- /*
+`helm test`, always on: is the installed driver ready? Three checks, then exit:
+
+  1. the controller Deployment is Available with every replica Ready, and
+     at least one (a Deployment scaled to 0 counts as Available);
+  2. the node DaemonSet's rollout is complete: every node pod is updated,
+     Ready and available (at least one);
+  3. the kubelet has registered this driver (driverName) in at least as many
+     CSINode objects as the DaemonSet runs node pods -- the registration a
+     mount on a node needs. Counted over CSINodes rather than matched
+     per pod, so the test needs no pods access.
+
+Each check waits, all three within one 240 s budget (Helm's own test timeout
+is 300 s), and fails with the last state it saw. `helm upgrade
+--wait` returns once all but maxUnavailable node pods are Ready, so a test run
+straight after it, as the install guide says, found "4 of 5 node pods Ready"
+on a healthy install when the node half checked once.
+
+It provisions nothing and talks to no Qumulo cluster, so it passes on any
+cluster the chart installed on -- including chart-verifier's chart-testing
+run. The write-and-read volume test (test-volume.yaml) is the opt-in one.
+
+It runs `qumulo-csi-driver ready-check` from the controller image, so the
+test pulls no image the release does not already run. It used to be a bash
+script in an OpenShift CLI image (ose-cli on OpenShift, OKD's origin-cli
+elsewhere), which put a third image and its CVEs into every install -- the
+0.1.1 scan found origin-cli a months-old CentOS Stream build and ose-cli
+graded F. tests.ready.image overrides the image: a mirror of the controller
+image, since the command is this driver's own. The check is the same three
+reads, documented on k8s.ReadyCheck; it watches nothing.
+
+Read through dig: a --reuse-values upgrade from an older chart carries no
+tests.ready.
+*/ -}}
+{{- $v := .Values.AsMap -}}
+{{- if dig "tests" "ready" "enabled" true $v }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . }}
+{{- $ocp := include "qumulo-csi-driver.isOpenShift" . }}
+{{- $image := dig "tests" "ready" "image" "" $v }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ printf "%s-test-ready" $fullname | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- if $ocp }}
+    {{- /* The controller's SCC: a cluster that admits the driver admits this pod. */}}
+    openshift.io/required-scc: {{ include "qumulo-csi-driver.testSCC" . | quote }}
+    {{- end }}
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ $fullname }}-test
+  # The ServiceAccount turns automounting off; this pod is the one that needs it.
+  automountServiceAccountToken: true
+  {{- with .Values.image.pullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    {{- if not (include "qumulo-csi-driver.assignTestUID" .) }}
+    {{- /* Left out when the SCC assigns a uid from the namespace range: it refuses any other. */}}
+    runAsUser: 65532
+    runAsGroup: 65532
+    {{- end }}
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: driver-ready
+      {{- if $image }}
+      image: {{ $image | quote }}
+      imagePullPolicy: {{ dig "tests" "imagePullPolicy" "IfNotPresent" $v }}
+      {{- else }}
+      image: {{ include "qumulo-csi-driver.controllerImage" . }}
+      imagePullPolicy: {{ include "qumulo-csi-driver.pullPolicy" (list .Values.image.controller $) }}
+      {{- end }}
+      command:
+        - /qumulo-csi-driver
+        - ready-check
+        - -namespace={{ .Release.Namespace }}
+        - -driver-name={{ .Values.driverName }}
+        - -deployment={{ printf "%s-controller" $fullname }}
+        - -daemonset={{ printf "%s-node" $fullname }}
+        # One budget for all three checks; Helm's test timeout is 300 s.
+        - -timeout=240s
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: {cpu: 10m, memory: 64Mi, ephemeral-storage: 16Mi}
+        limits: {memory: 64Mi, ephemeral-storage: 64Mi}
+{{- end }}
