@@ -253,13 +253,15 @@ sidecars:
     # so the image here is OUR rebuild of upstream v0.15.1 at the tag's own
     # commit (f7f0778d) with Go 1.27.4 and x/net v0.62.0 on UBI 9 micro:
     # 0 fixable HIGH/CRITICAL (build/csi-addons-sidecar/, published by
-    # release-sidecar.yml). Re-measured on it on kind against the lab pair
-    # (2026-11-25, controller v0.15.1): failover, failback, forced failover
-    # and the old-primary cases pass. Switch back to quay.io/csiaddons at the
-    # first upstream release with no fixable HIGH/CRITICAL.
+    # release-sidecar.yml). -qumulo.2 is that rebuild made by this
+    # repository's release-sidecar.yml from the same source, Containerfile and
+    # toolchain as -qumulo.1, which was re-measured on kind against the lab
+    # pair (2026-11-25, controller v0.15.1): failover, failback, forced
+    # failover and the old-primary cases pass. Switch back to quay.io/csiaddons
+    # at the first upstream release with no fixable HIGH/CRITICAL.
     # TestChartCSIAddonsIsWiredConsistently pins it; change it (tag and
-    # digest) together with a re-run of those rounds.
-    image: ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.1@sha256:27f74ea6356d63d13d29142ca0fc5beebfb823ced021e72c9d6a81a80f11cc34
+    # digest) together with a re-run of those tests.
+    image: ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.2@sha256:2bf6a27c2ecf0ac3f6792249d16727f21650ed62316e6481b0a66b927844cf92
     # The port the csi-addons controller reaches this sidecar on, recorded in
     # the CSIAddonsNode it registers.
     controllerPort: 9070

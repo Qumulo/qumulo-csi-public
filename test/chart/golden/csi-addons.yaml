@@ -970,7 +970,7 @@ spec:
         # enabled: it cannot start without the csi-addons CRDs, and a
         # container that will not start takes the controller pod with it.
         - name: csi-addons
-          image: ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.1@sha256:27f74ea6356d63d13d29142ca0fc5beebfb823ced021e72c9d6a81a80f11cc34
+          image: ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.2@sha256:2bf6a27c2ecf0ac3f6792249d16727f21650ed62316e6481b0a66b927844cf92
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

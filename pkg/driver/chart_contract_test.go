@@ -1547,11 +1547,12 @@ func TestChartCSIAddonsIsWiredConsistently(t *testing.T) {
 				// the replication_source handle field, the enable-once
 				// cadence, force on FailedPrecondition) were
 				// measured on v0.15.0; v0.15.1 is its dependency-only patch,
-				// taken for CVE fixes, and v0.15.1-qumulo.1 is our rebuild of
-				// it with the rest of them (build/csi-addons-sidecar/),
+				// taken for CVE fixes, and v0.15.1-qumulo.2 is our rebuild of
+				// it with the rest of them (build/csi-addons-sidecar/), from
+				// the same source and toolchain as -qumulo.1, which was
 				// re-measured on kind on 2026-11-25. Any other tag is an
 				// unreviewed sidecar.
-				assert.True(t, strings.HasPrefix(sidecar.Image, "ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.1@sha256:"),
+				assert.True(t, strings.HasPrefix(sidecar.Image, "ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:v0.15.1-qumulo.2@sha256:"),
 					"the csi-addons sidecar must be the measured version, pinned by digest: %s", sidecar.Image)
 				// The sidecar dials the SAME socket the CSI sidecars use: the
 				// driver serves the csi-addons services alongside the CSI
