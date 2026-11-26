@@ -13,10 +13,10 @@ kind: PriorityClass
 metadata:
   name: qumulo-csi-qumulo-csi-driver-node-critical
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 value: 1000000000
@@ -34,10 +34,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: controller
@@ -61,10 +61,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 ---
@@ -77,10 +77,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-node
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 ---
@@ -91,10 +91,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-test
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -106,10 +106,10 @@ kind: StorageClass
 metadata:
   name: qumulo-nfs
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
   annotations:
@@ -156,10 +156,10 @@ kind: StorageClass
 metadata:
   name: qumulo-dedicated
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
   annotations:
@@ -211,10 +211,10 @@ kind: StorageClass
 metadata:
   name: qumulo-corp
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
   annotations:
@@ -274,10 +274,10 @@ kind: ClusterRole
 metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 rules:
@@ -349,10 +349,10 @@ kind: ClusterRole
 metadata:
   name: qumulo-csi-qumulo-csi-qumulo-csi-driver-test
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -367,10 +367,10 @@ kind: ClusterRoleBinding
 metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 subjects:
@@ -388,10 +388,10 @@ kind: ClusterRoleBinding
 metadata:
   name: qumulo-csi-qumulo-csi-qumulo-csi-driver-test
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -416,10 +416,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 rules:
@@ -434,10 +434,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller-secrets
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 rules:
@@ -454,10 +454,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-test
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -479,10 +479,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 subjects:
@@ -501,10 +501,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller-secrets
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 subjects:
@@ -523,10 +523,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-test
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -546,10 +546,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-node
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: node
@@ -573,10 +573,10 @@ spec:
   template:
     metadata:
       labels:
-        helm.sh/chart: qumulo-csi-driver-0.1.1
+        helm.sh/chart: qumulo-csi-driver-0.1.2
         app.kubernetes.io/name: qumulo-csi-driver
         app.kubernetes.io/instance: qumulo-csi
-        app.kubernetes.io/version: "0.1.1"
+        app.kubernetes.io/version: "0.1.2"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/part-of: qumulo-csi-driver
         app.kubernetes.io/component: node
@@ -712,7 +712,7 @@ spec:
               memory: 64Mi
 
         - name: qumulo-csi-driver
-          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.1
+          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.2
           securityContext:
             privileged: true
           imagePullPolicy: Always
@@ -818,10 +818,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-controller
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: controller
@@ -842,10 +842,10 @@ spec:
   template:
     metadata:
       labels:
-        helm.sh/chart: qumulo-csi-driver-0.1.1
+        helm.sh/chart: qumulo-csi-driver-0.1.2
         app.kubernetes.io/name: qumulo-csi-driver
         app.kubernetes.io/instance: qumulo-csi
-        app.kubernetes.io/version: "0.1.1"
+        app.kubernetes.io/version: "0.1.2"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/part-of: qumulo-csi-driver
         app.kubernetes.io/component: controller
@@ -1042,7 +1042,7 @@ spec:
               memory: 128Mi
 
         - name: qumulo-csi-driver
-          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1
+          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -1141,10 +1141,10 @@ kind: CSIDriver
 metadata:
   name: csi.qumulo.com
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
 # Two fields below are immutable on a live object and two are not; measured on
@@ -1189,10 +1189,10 @@ metadata:
   name: qumulo-csi-qumulo-csi-driver-test-ready
   namespace: qumulo-csi
   labels:
-    helm.sh/chart: qumulo-csi-driver-0.1.1
+    helm.sh/chart: qumulo-csi-driver-0.1.2
     app.kubernetes.io/name: qumulo-csi-driver
     app.kubernetes.io/instance: qumulo-csi
-    app.kubernetes.io/version: "0.1.1"
+    app.kubernetes.io/version: "0.1.2"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: qumulo-csi-driver
     app.kubernetes.io/component: test
@@ -1212,7 +1212,7 @@ spec:
       type: RuntimeDefault
   containers:
     - name: driver-ready
-      image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1
+      image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2
       imagePullPolicy: Always
       command:
         - /qumulo-csi-driver

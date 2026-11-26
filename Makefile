@@ -386,7 +386,7 @@ docker-build-node: docker-buildkit-check
 # upstream tag it rebuilds, not with VERSION, and is published once per
 # rebuild rather than on every release. The tag never moves: a new rebuild
 # bumps the -qumulo.N suffix.
-CSI_ADDONS_SIDECAR_TAG   ?= v0.15.1-qumulo.1
+CSI_ADDONS_SIDECAR_TAG   ?= v0.15.1-qumulo.2
 IMAGE_CSI_ADDONS_SIDECAR ?= $(IMAGE_PREFIX)csi-addons-k8s-sidecar
 
 CSI_ADDONS_REPO   ?= https://github.com/csi-addons/kubernetes-csi-addons.git
@@ -420,8 +420,8 @@ csi-addons-sidecar-buildx: csi-addons-sidecar-src
 	docker buildx build --platform $(PLATFORMS) -f build/csi-addons-sidecar/Containerfile --target sidecar \
 	  -t $(IMAGE_CSI_ADDONS_SIDECAR):$(CSI_ADDONS_SIDECAR_TAG) --push $(CSI_ADDONS_SRC)
 
-# What release.yml runs: publish the sidecar once, then never again. Unlike
-# the driver images (republished under VERSION on every push to main), a
+# What release-sidecar.yml runs: publish the sidecar once, then never again.
+# Like the driver images (never republished under a released VERSION), a
 # rebuild's tag is fixed and the chart pins its digest, so an already
 # published tag is left alone and the step succeeds.
 .PHONY: csi-addons-sidecar-publish

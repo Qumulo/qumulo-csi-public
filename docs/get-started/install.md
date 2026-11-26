@@ -28,15 +28,15 @@ kubectl create namespace qumulo-csi
 ## 2. The published chart and images
 
 Each release publishes a chart and two images to the GitHub Container Registry.
-All three are named after the release — `0.1.1` — and nothing else. Qumulo
+All three are named after the release — `0.1.2` — and nothing else. Qumulo
 gives you that version with the release; if you do not have it, ask through
 [care.qumulo.com](https://care.qumulo.com).
 
 | What | Where | Version |
 |---|---|---|
-| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` | `0.1.1` |
-| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.1` |
-| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.1` |
+| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` | `0.1.2` |
+| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.2` |
+| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.2` |
 
 All three are public: there is no registry login, no pull secret and no
 mirroring step. The chart carries those image repositories as its defaults and
@@ -105,7 +105,7 @@ images it was built with.
 ```bash
 # <-- EDIT: --version is the one from step 2
 helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace qumulo-csi \
   --values values.yaml
 ```

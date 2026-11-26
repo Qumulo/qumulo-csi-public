@@ -10,7 +10,7 @@ cluster with a directory that is already NFS-exported; each volume is created as
 a subdirectory beneath it, or as its own NFS export.
 
 - **CSI plugin name:** `csi.qumulo.com`
-- **Project status:** 0.1.1
+- **Project status:** 0.1.2
 - **License:** [Qumulo CSI Driver License](LICENSE)
 
 ## Documentation
@@ -31,13 +31,14 @@ The rendered documentation site is the best way to read the docs:
 
 | Driver Version | Supported K8s Version | Supported OpenShift | CSI Spec | Status |
 |---|---|---|---|---|
+| 0.1.2 | 1.35+ | OCP 4.22 (RHCOS 9.8) | v1.13.0 | First release built from this repository |
 | 0.1.1 | 1.35+ | OCP 4.22 (RHCOS 9.8) | v1.13.0 | Patch release |
 | 0.1.0 | 1.35+ | OCP 4.22 (RHCOS 9.8) | v1.13.0 | Initial release |
 
 | Image | Tag | Platforms |
 |---|---|---|
-| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.1` | `linux/amd64`, `linux/arm64` |
-| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.2` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.2` | `linux/amd64`, `linux/arm64` |
 
 The images are visible to members of the Qumulo GitHub organization only;
 pulling them needs a pull secret, set up in

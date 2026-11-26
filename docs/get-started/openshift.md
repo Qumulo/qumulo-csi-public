@@ -22,7 +22,7 @@ proxy and CA failures, monitoring and uninstall — see
 | Node operating system | RHCOS 9.8 |
 | NFS | 4.1 and 3 |
 | Architectures | `x86_64`, `aarch64` |
-| Driver | 0.1.1 |
+| Driver | 0.1.2 |
 
 !!! warning "OpenShift 4.21 and older are not supported"
     The chart enforces `kubeVersion: ">=1.35.0-0"`, and OpenShift 4.21 ships
@@ -72,7 +72,7 @@ oc new-project qumulo-csi
 
 helm install qumulo-csi \
   oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 -n qumulo-csi -f values.yaml
+  --version 0.1.2 -n qumulo-csi -f values.yaml
 ```
 
 Qumulo gives you the exact `--version` for your release.
@@ -85,7 +85,7 @@ it:
 
 ```bash
 helm show values oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 | grep -A2 'repository:'
+  --version 0.1.2 | grep -A2 'repository:'
 ```
 
 That is all there is to it. There is no SCC step: the chart creates the node

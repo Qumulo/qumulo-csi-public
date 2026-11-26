@@ -12,6 +12,23 @@ Each release covers the driver images and the Helm chart together: the chart
 
 Nothing yet.
 
+## [0.1.2] - unreleased
+
+The first release built and published from this repository. The driver code
+is that of 0.1.1.
+
+### Added
+
+- `release.yml` builds both driver images (`linux/amd64`, `linux/arm64`) and
+  the Helm chart from this repository and publishes them to
+  `ghcr.io/qumulo/qumulo-csi-public` on a `v<VERSION>` tag. It refuses a
+  version that is already published, so a released tag is never moved.
+- Signed build provenance (SLSA, Sigstore) for both images, the chart and the
+  csi-addons sidecar, pushed next to each artifact. Verify with
+  `gh attestation verify oci://<image>:<tag> --owner Qumulo`.
+- `release-sidecar.yml` publishes the csi-addons sidecar rebuild on its own
+  tag, `v0.15.1-qumulo.2`, which the chart pins by digest.
+
 ## [0.1.1] - unreleased
 
 <!--
@@ -216,6 +233,7 @@ No release tags exist in either repository yet, so the compare links below
 resolve only once v0.1.0 and v0.1.1 are tagged.
 -->
 
-[Unreleased]: https://github.com/Qumulo/qumulo-csi-public/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Qumulo/qumulo-csi-public/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Qumulo/qumulo-csi-public/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Qumulo/qumulo-csi-public/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Qumulo/qumulo-csi-public/releases/tag/v0.1.0

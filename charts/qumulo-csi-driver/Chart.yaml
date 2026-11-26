@@ -6,8 +6,8 @@ type: application
 # version is the chart's own version; appVersion is the driver's, and tracks
 # the VERSION file at the repo root -- `make helm-lint` fails if they drift.
 # appVersion is quoted so YAML cannot read it as a number.
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"
 
 # The chart requires Kubernetes 1.35.0+.
 #

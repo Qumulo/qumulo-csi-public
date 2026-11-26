@@ -37,17 +37,19 @@ This repository contains a custom Kubernetes Container Storage Interface (CSI) D
   `make e2e-minikube` installs by it, because a tag carrying a `-` renders
   `IfNotPresent` and a minikube-daemon image cannot be pulled. Nothing pushes
   it.
-  The consequence to hold on to: `release.yml` runs `make release` on **every**
-  push to `main`, so every push republishes `:$(VERSION)`. A release is
-  identified by its version, so **`VERSION` must be bumped for every release**;
-  landing anything else on `main` republishes the current version from a
-  different tree and nothing published records the difference. What protects a
+  The consequence to hold on to: `release.yml` runs `make release` when a
+  `v$(VERSION)` tag is pushed, and refuses a `VERSION` that is already
+  published -- released tags are never moved. A release is identified by its
+  version, so **`VERSION` must be bumped for every release**. The csi-addons
+  sidecar has its own `-qumulo.N` tag and is published first by
+  `release-sidecar.yml`; `release.yml` refuses to start until the sidecar the
+  chart pins is published. What protects a
   node is the chart's pull policy: an empty `image.*.pullPolicy` resolves to
   `Always` for a bare release tag (so a cached older image is never served
   under the same name) and `IfNotPresent` for a digest or a local build
   tag. The commit is still in the binary (`pkg/version.GitCommit`) and in
   `make version`. Customers install the packaged chart that `make release`
-  pushes to `oci://ghcr.io/qumulo/charts`, never the folder.
+  pushes to `oci://ghcr.io/qumulo/qumulo-csi-public/charts`, never the folder.
 * **Docker Multi-stage Pattern:** One Dockerfile, one build stage, two named
   runtime targets. There is no default image -- a bare `docker build` would pick
   whichever stage is last -- so always build through `make docker-build`, which

@@ -35,7 +35,7 @@ class, and a class missing either is refused at install.
 ## Install
 
 Install the chart published with each release,
-`oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` at version `0.1.1`;
+`oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` at version `0.1.2`;
 it pulls the images of its own build. The images are pulled from the GitHub Container Registry,
 `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` and `-node`, for `linux/amd64`
 and `linux/arm64`. They are visible to members of the Qumulo GitHub
@@ -53,7 +53,7 @@ kubectl -n qumulo-csi create secret docker-registry ghcr-pull \
 ```sh
 cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin
 helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace qumulo-csi \
   --set 'image.pullSecrets[0].name=ghcr-pull' \
   --set storageClasses[0].name=qumulo-nfs \
@@ -109,17 +109,17 @@ A failed test keeps its pod (and the volume test its claim):
 replaces them.
 
 **Do not install from this folder outside development.** The chart in the
-repo is `0.1.1`, and its default image tag is its appVersion, `0.1.1`, which
+repo is `0.1.2`, and its default image tag is its appVersion, `0.1.2`, which
 every publish of that version moves. It is pulled `Always` for that reason --
-a node never keeps an earlier cached `0.1.1` -- but `helm history` cannot tell
+a node never keeps an earlier cached `0.1.2` -- but `helm history` cannot tell
 two publishes of one version apart, and the image can be from another commit
 than the chart you are holding. A released chart,
 `make chart-package`'s `bin/qumulo-csi-driver-<VERSION>.tgz`, carries the same
 version and appVersion, so it names the same images; what makes it the one to
 install is that `make release REGISTRY=...` publishes the images and then that
 chart together, and CI runs it on every merge to `main`. To install one exact
-build rather than whatever `0.1.1` now points at, set the image tag to a
-digest: `--set image.controller.tag=0.1.1@sha256:<digest>`. A build that was only built
+build rather than whatever `0.1.2` now points at, set the image tag to a
+digest: `--set image.controller.tag=0.1.2@sha256:<digest>`. A build that was only built
 locally (`make docker-build`) has no registry in its name, so point the chart
 at it, and say to use the copy the node has:
 `--set image.controller.repository=qumulo-csi-driver-controller --set image.node.repository=qumulo-csi-driver-node --set image.controller.pullPolicy=IfNotPresent --set image.node.pullPolicy=IfNotPresent`.
@@ -484,7 +484,7 @@ kubectl get sc -o yaml
 # Then render the new chart against your values: the values schema refuses a
 # bad snapshotSchedule, allowedClients or tenantID here, before anything changes
 helm upgrade <release> oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 -f your-values.yaml --dry-run=server
+  --version 0.1.2 -f your-values.yaml --dry-run=server
 ```
 
 A StorageClass's parameters and mount options cannot be changed in place, so

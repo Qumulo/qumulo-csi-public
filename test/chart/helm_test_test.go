@@ -97,7 +97,7 @@ func TestHelmTestReadyIsOnByDefault(t *testing.T) {
 func TestHelmTestReadyRunsFromTheControllerImage(t *testing.T) {
 	for _, args := range [][]string{nil, {"--set", "openshift.enabled=true"}} {
 		out := renderReadyTest(t, args...)
-		assert.Contains(t, out, "image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1\n", args)
+		assert.Contains(t, out, "image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2\n", args)
 		assert.Contains(t, out, "imagePullPolicy: Always\n", "the bare release tag moves, as for the controller")
 		assert.NotContains(t, out, "ose-cli")
 		assert.NotContains(t, out, "origin-cli")
@@ -198,7 +198,7 @@ func TestHelmTestUsesTheNamedClass(t *testing.T) {
 // values, which have no `tests` key: the renders must not nil-pointer (I-1).
 func TestHelmTestRendersWithoutTheTestsBlock(t *testing.T) {
 	out := renderReadyTest(t, "--set", "tests=null")
-	assert.Contains(t, out, "image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1\n")
+	assert.Contains(t, out, "image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2\n")
 	_, err := render(t, "templates/tests/test-volume.yaml", "--set", "tests=null")
 	assert.Error(t, err, "no tests.storageClass, no volume test")
 }

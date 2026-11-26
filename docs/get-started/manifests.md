@@ -24,7 +24,7 @@ locally and apply the output.
 ```bash
 # <-- EDIT: --version is the release's, from Qumulo or the chart package page
 helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace qumulo-csi \
   --values values.yaml \
   --skip-tests \
@@ -69,7 +69,7 @@ Re-render from the same values file on every upgrade, and diff before applying:
 
 ```bash
 helm template qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace qumulo-csi --values values.yaml --skip-tests > qumulo-csi.new.yaml
 diff -u qumulo-csi.yaml qumulo-csi.new.yaml
 ```

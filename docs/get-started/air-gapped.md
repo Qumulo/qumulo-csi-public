@@ -3,7 +3,7 @@
 Installing on a cluster that cannot reach `ghcr.io`. The driver itself needs no
 internet access at runtime — it talks only to the Qumulo cluster and the
 Kubernetes API — so the whole problem is getting the two images and the chart
-inside. All three are named after the release, `0.1.1` below; keep the tags
+inside. All three are named after the release, `0.1.2` below; keep the tags
 identical on your mirror, because the chart asks for the images of its own
 release.
 
@@ -19,12 +19,12 @@ From a host that can reach both registries:
 ```bash
 # <-- EDIT: your registry
 docker buildx imagetools create \
-  -t registry.example.com/qumulo-csi-driver-controller:0.1.1 \
-  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.1
+  -t registry.example.com/qumulo-csi-driver-controller:0.1.2 \
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2
 
 docker buildx imagetools create \
-  -t registry.example.com/qumulo-csi-driver-node:0.1.1 \
-  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.1
+  -t registry.example.com/qumulo-csi-driver-node:0.1.2 \
+  ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.2
 ```
 
 !!! warning "Use `imagetools create`, not pull-and-push"
@@ -36,7 +36,7 @@ docker buildx imagetools create \
 Confirm both platforms arrived:
 
 ```bash
-docker buildx imagetools inspect registry.example.com/qumulo-csi-driver-node:0.1.1 \
+docker buildx imagetools inspect registry.example.com/qumulo-csi-driver-node:0.1.2 \
   | grep -E 'Digest|Platform'
 ```
 
@@ -47,13 +47,13 @@ Where no host can reach both sides, move an OCI layout on media:
 ```bash
 # outside
 skopeo copy --all \
-  docker://ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.1 \
-  oci-archive:qumulo-csi-driver-node-0.1.1.tar
+  docker://ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.2 \
+  oci-archive:qumulo-csi-driver-node-0.1.2.tar
 
 # inside
 skopeo copy --all \
-  oci-archive:qumulo-csi-driver-node-0.1.1.tar \
-  docker://registry.example.com/qumulo-csi-driver-node:0.1.1
+  oci-archive:qumulo-csi-driver-node-0.1.2.tar \
+  docker://registry.example.com/qumulo-csi-driver-node:0.1.2
 ```
 
 `--all` is what carries every platform. Repeat for the controller image, for
@@ -64,10 +64,10 @@ with `helm pull` ([step 2](#2-bring-the-chart-in)).
 
 ```bash
 # outside: pull the published chart as a file
-helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.1 # <-- EDIT
+helm pull oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver --version 0.1.2 # <-- EDIT
 ```
 
-Carry `qumulo-csi-driver-0.1.1.tgz` inside with the images. Quote the
+Carry `qumulo-csi-driver-0.1.2.tgz` inside with the images. Quote the
 `--version` explicitly: without it Helm resolves whichever version the
 registry happens to serve, which need not be the one you mirrored.
 
@@ -86,7 +86,7 @@ Do this with the chart you have already brought inside ([step 2](#2-bring-the-ch
 so the listing itself needs no network:
 
 ```bash
-helm template qumulo-csi ./qumulo-csi-driver-0.1.1.tgz \
+helm template qumulo-csi ./qumulo-csi-driver-0.1.2.tgz \
   --values qumulo-values.yaml \
   | grep -E '^\s+image:' | sort -u
 ```
@@ -157,9 +157,9 @@ image:
     ```yaml
     image:
       controller:
-        tag: "0.1.1@sha256:<digest>"
+        tag: "0.1.2@sha256:<digest>"
       node:
-        tag: "0.1.1@sha256:<digest>"
+        tag: "0.1.2@sha256:<digest>"
     ```
 
 ## 5. Private CA
@@ -184,7 +184,7 @@ The node plugin never calls the REST API, so it gets no CA mount.
 ## 6. Install
 
 ```bash
-helm install qumulo-csi ./qumulo-csi-driver-0.1.1.tgz \
+helm install qumulo-csi ./qumulo-csi-driver-0.1.2.tgz \
   --namespace qumulo-csi --values qumulo-values.yaml
 ```
 

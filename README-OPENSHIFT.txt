@@ -1,5 +1,5 @@
 ================================================================================
-QUMULO CSI DRIVER 0.1.1 -- INSTALL ON OPENSHIFT
+QUMULO CSI DRIVER 0.1.2 -- INSTALL ON OPENSHIFT
 ================================================================================
 
 This file is a standalone installation guide for OpenShift Container Platform.
@@ -19,7 +19,7 @@ Everything in this file is also on the documentation site, under
   Node operating system .......... RHCOS 9.8
   NFS ............................ 4.1 and 3
   Architectures .................. x86_64, aarch64
-  Driver ......................... 0.1.1
+  Driver ......................... 0.1.2
 
   OpenShift 4.21 and older are NOT supported. The chart enforces
   kubeVersion ">=1.35.0-0" and OpenShift 4.21 ships Kubernetes 1.34, so
@@ -61,7 +61,7 @@ Everything in this file is also on the documentation site, under
 
   Qumulo support gives you the public registry address and the exact chart
   version for your release. Throughout this file they appear as
-  <public-registry>/<org> and 0.1.1+<commit>.
+  <public-registry>/<org> and 0.1.2.
 
 
 --------------------------------------------------------------------------------
@@ -148,14 +148,14 @@ Everything in this file is also on the documentation site, under
 
   helm install qumulo-csi \
     oci://<public-registry>/<org>/charts/qumulo-csi-driver \
-    --version 0.1.1+<commit> \
+    --version 0.1.2 \
     --namespace qumulo-csi \
     --values qumulo-values.yaml
 
   To see what the install will pull before you run it:
 
   helm show values oci://<public-registry>/<org>/charts/qumulo-csi-driver \
-    --version 0.1.1+<commit> | grep -A2 'repository:'
+    --version 0.1.2 | grep -A2 'repository:'
 
   If you render manifests offline instead of installing directly -- helm
   template, Argo CD, any GitOps pipeline -- the render cannot see the cluster,
@@ -361,5 +361,5 @@ Everything in this file is also on the documentation site, under
 
 
 ================================================================================
-Driver 0.1.1. CSI plugin name: csi.qumulo.com. Qumulo CSI Driver License.
+Driver 0.1.2. CSI plugin name: csi.qumulo.com. Qumulo CSI Driver License.
 ================================================================================
