@@ -1,0 +1,17 @@
+# Step 4 -- request a volume.
+#
+# This is the step that actually provisions anything: applying this PVC is
+# what makes the driver call CreateVolume and create a directory (plus a
+# quota) on the Qumulo cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qumulo-example-pvc
+  namespace: qumulo-csi
+spec:
+  accessModes:
+    - ReadWriteMany   # NFS has no attach step, so many pods can share one volume
+  storageClassName: qumulo-example
+  resources:
+    requests:
+      storage: 1Gi

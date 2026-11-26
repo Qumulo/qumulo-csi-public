@@ -48,7 +48,7 @@ Every line must show `csi.qumulo.com`.
 
 !!! warning "An empty entry means that node cannot mount"
     Any pod scheduled there hangs in `ContainerCreating`. The usual cause is a
-    non-default `kubeletDir` — k3s and microk8s in particular. See
+    non-default `kubeletDir` — MicroK8s in particular. See
     [Troubleshoot Guide](../operate/troubleshoot-mounts.md).
 
 !!! note "Provisioning needs at least one registered node plugin"
@@ -65,8 +65,8 @@ kubectl -n qumulo-csi get pods \
 
 ```console
 POD                                      IMAGE
-qumulo-csi-controller-7d8f9c6b4d-k2xp9   ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller@sha256:1a2b3c...
-qumulo-csi-node-4vh2n                    ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node@sha256:4d5e6f...
+qumulo-csi-controller-abcdefghij-k2xp9   ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller@sha256:1a2b3c...
+qumulo-csi-node-4vh2n                    ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node@sha256:abcdef...
 ```
 
 The digest is what was really pulled, whatever tag was asked for — worth

@@ -21,8 +21,8 @@
 
 ??? question "Why are there two images?"
     The controller only speaks HTTPS and touches no filesystem, so it runs a
-    distroless image as a non-root user. The node image **cannot** be
-    distroless: `mount-utils` mounts by exec'ing `mount(8)`, and the kernel
+    minimal UBI micro image as a non-root user. The node image **cannot** be
+    that minimal: `mount-utils` mounts by exec'ing `mount(8)`, and the kernel
     needs the `mount.nfs` helper — so it needs a userland, and root, to mount
     in the host namespace.
 
@@ -86,15 +86,10 @@
     that address. The driver now refuses this up front where it can see it.
     See [Troubleshoot Guide](../operate/troubleshoot-mounts.md).
 
-??? question "A PVC is stuck at `already exists`."
-    A directory already exists at the volume's path and **holds data**, so the
-    driver refuses to adopt it rather than put a quota on somebody else's
-    files. Give the claim a different volume name, move the data aside, or
-    [adopt the folder deliberately](../features/existing-folder.md).
-
-    An *interrupted* create is no longer this problem: a create cut between
-    making the directory and setting its quota is finished by the retry,
-    so a controller restart mid-provision needs no manual repair. See
+??? question "A PVC is stuck at `already exists` forever."
+    A directory that holds files and has no quota sits at the volume's path,
+    so the driver will not adopt it. An interrupted create no longer
+    causes this: its retry finishes the empty directory it left. See
     [Troubleshoot provisioning](../provision/troubleshoot.md#a-pvc-stuck-at-already-exists).
 
 ??? question "Can I change a StorageClass parameter?"
@@ -189,10 +184,21 @@
 ??? question "Is PVC-to-PVC cloning supported?"
     No. Use snapshot-and-restore — see [Copy a volume](../protect/restore.md#copy-a-volume).
 
+??? question "What is the difference between a Kubernetes snapshot and a Qumulo snapshot?"
+    Every snapshot is a Qumulo snapshot on the array. The difference is who
+    takes it. A *Kubernetes snapshot* is one you ask for with a
+    `VolumeSnapshot`; it shows in `kubectl` and restores into a new PVC. A
+    *scheduled snapshot* is taken by the array on a class's `snapshotSchedule`;
+    Kubernetes never sees it, and you restore it by copying from the volume's
+    hidden `.snapshot` folder. Side by side, with *imported* and
+    *array-internal* snapshots: [Snapshot a volume](../protect/snapshot.md).
+
 ??? question "Why can't I see my scheduled snapshots as `VolumeSnapshot` objects?"
     Deliberately. Handing the CO a snapshot it never asked for would mean
     `kubectl delete volumesnapshot` could destroy a scheduled backup.
-    `DeleteSnapshot` refuses a policy snapshot too.
+    `DeleteSnapshot` refuses a scheduled snapshot too. To see them, list
+    `/<mount>/.snapshot` in a pod; to restore one, see
+    [Restore from a scheduled snapshot](../protect/restore.md#restore-from-a-scheduled-snapshot).
 
 ??? question "How big a volume can be restored?"
     50,000 entries (files and directories) and 2 TiB per restore, decided
@@ -205,11 +211,15 @@
     every imported content its deletion credential, with the prefix
     `snapshot.storage.kubernetes.io/`.
 
-??? question "Is replication production-ready?"
-    Yes. It has been exercised against a live array pair in both directions,
-    including planned and forced failover and failback. The delete and expand
-    *guards* for replicated volumes are always active, even with replication
-    disabled.
+??? question "Is replication supported?"
+    Yes: supported, opt-in. It is off until you set
+    `sidecars.csiAddons.enabled`, and it has been exercised against a live
+    array pair in both directions, including planned and forced failover and
+    failback. Read its limits in
+    [Supported features](supported-features.md#5-replication-and-disaster-recovery)
+    first. The delete and expand *guards* for replicated volumes are always
+    active, even with replication disabled. `qumulo-csi-repoint` is a
+    Preview tool, run from source.
 
 ## Operations
 

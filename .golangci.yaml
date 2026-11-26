@@ -1,0 +1,82 @@
+# golangci-lint configuration.
+#
+# The linter set here is deliberately small. A larger set was measured against
+# this tree and produced 88 findings, of which the great majority were noise --
+# repeated literals in table tests, and gRPC handler parameters the generated
+# interface requires. Worse, `nilerr` flagged four places where the driver
+# returns a nil error after a non-nil one *because the CSI spec requires it*
+# (an unknown snapshot ID must yield an empty list, not an error). A linter that
+# argues with the spec costs more than it finds.
+#
+# The rule applied throughout: enable a linter only if its findings here are
+# things we would actually change. See docs/GOLANGCI-PLAN.md for the baseline
+# each decision was made from.
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint what the build tags actually compile. Without this, test/live,
+  # test/e2e and the chart contract tests -- roughly 6,000 lines that exercise
+  # a real cluster -- are not linted badly, they are not linted at all:
+  # golangci-lint reports "no go files to analyze" and exits 0.
+  # defects and knownlimits: the TestDefect_* suite, which `make test` runs.
+  build-tags:
+    - live
+    - e2e
+    - chart
+    - defects
+    - knownlimits
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # Wrapped errors must use %w, or errors.Is/As stop working. The driver
+    # branches on error identity in several places (IsNotFound, IsConflict).
+    - errorlint
+    # Catches the classic loop-variable aliasing bug. Free.
+    - copyloopvar
+    # Multiplying two Durations is almost always wrong, and this code does
+    # time arithmetic for restore budgets and tree-delete polling.
+    - durationcheck
+    # Every Qumulo API call has a response body that must be closed.
+    - bodyclose
+    # http.MethodGet over "GET", and similar.
+    - usestdlibvars
+
+  settings:
+    errcheck:
+      # A Close() during teardown returns an error nothing can act on, and
+      # checking it turns every deferred call into three lines.
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Listener).Close
+
+  exclusions:
+    rules:
+      # Test teardown ignores Close and RemoveAll errors on purpose: there is
+      # nothing a test can do about a failed cleanup that t.Cleanup has not
+      # already handled, and checking each one buries the assertion.
+      #
+      # Only linters that are actually enabled above are listed here. An
+      # exclusion for a linter that is not running is dead configuration: it
+      # reads as though the rule is active and suppressed, when in fact the
+      # rule never fires. goconst and revive's unused-parameter would both
+      # need excluding if they were ever enabled -- see docs/GOLANGCI-PLAN.md
+      # for why they are not.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+      # csi-addons deprecated volume_id in favour of replication_source, but
+      # the driver still reads it as a fallback for older controllers
+      # (requestVolumeID), so the tests send it on purpose. Driver code reads
+      # it only through requestVolumeID.
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "SA1019: .*github.com/csi-addons/spec/lib/go/replication.*VolumeId is deprecated"
+
+formatters:
+  enable:
+    - gofmt

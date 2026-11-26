@@ -1,0 +1,56 @@
+{{- /*
+The `helm test` readiness check's identity (templates/tests/test-driver-ready.yaml):
+read-only, and only what the check reads -- the controller Deployment and
+node DaemonSet in this namespace, and CSINode objects. No pods access.
+
+Ordinary release objects, not test hooks: Helm counts a non-pod hook as
+succeeded the moment it exists, so hook-succeeded would delete the grant
+while the test pod still needs it, and cluster-scoped hooks outlive
+`helm uninstall`. These come and go with the release. tests.ready.enabled:
+false renders none of them.
+*/ -}}
+{{- if dig "tests" "ready" "enabled" true .Values.AsMap }}
+{{- $fullname := include "qumulo-csi-driver.fullname" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+rules:
+  # ready-check polls both workloads with GETs and watches nothing.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ printf "%s-controller" $fullname | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    resourceNames: [{{ printf "%s-node" $fullname | quote }}]
+    verbs: ["get"]
+---
+# CSINode is cluster-scoped. Named with the namespace, like the node SCC, so
+# two releases of one name in different namespaces do not share it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-test" .Release.Namespace $fullname | trunc 253 }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["list"]
+{{- end }}

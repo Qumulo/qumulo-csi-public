@@ -1,0 +1,17 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-team-b
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
+parameters:
+  server: <qumulo-cluster-address>
+  storeRealPath: /csi/team-b
+  storeExportPath: /csi/team-b
+  protocol: nfs4.1
+  csi.storage.k8s.io/provisioner-secret-name: qumulo-team-b
+  csi.storage.k8s.io/provisioner-secret-namespace: qumulo-csi
+  csi.storage.k8s.io/controller-expand-secret-name: qumulo-team-b
+  csi.storage.k8s.io/controller-expand-secret-namespace: qumulo-csi

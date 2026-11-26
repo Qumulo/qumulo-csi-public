@@ -1,0 +1,40 @@
+{{- range $vsc := .Values.volumeSnapshotClasses }}
+{{- if not $.Values.sidecars.snapshotter.enabled }}
+{{- fail (printf "volumeSnapshotClasses[%s]: set sidecars.snapshotter.enabled=true, or nothing will act on these objects" $vsc.name) }}
+{{- end }}
+{{- if not $vsc.name }}
+{{- fail "volumeSnapshotClasses[]: name is required" }}
+{{- end }}
+{{- if and $vsc.deletionPolicy (not (has (toString $vsc.deletionPolicy) (list "Delete" "Retain"))) }}
+{{- fail (printf "volumeSnapshotClasses[%s]: deletionPolicy must be Delete or Retain, got %q" $vsc.name (toString $vsc.deletionPolicy)) }}
+{{- end }}
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ $vsc.name }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" $ | nindent 4 }}
+  {{- /* Never deleted by Helm; see storageclass.yaml. */}}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- if $vsc.isDefault }}
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+    {{- end }}
+driver: {{ $.Values.driverName }}
+# Delete removes the snapshot from the Qumulo cluster with the VolumeSnapshot.
+# Retain keeps it, and it then has to be removed on the cluster by hand.
+deletionPolicy: {{ $vsc.deletionPolicy | default "Delete" }}
+{{- $secret := required (printf "volumeSnapshotClasses[%s]: secretName is required -- this driver keeps no fallback token" $vsc.name) $vsc.secretName }}
+{{- if $secret }}
+parameters:
+  # The credential for the cluster whose volumes this class snapshots. Snapshot
+  # RPCs take their own secret parameters -- a StorageClass's provisioner secret
+  # does not reach them -- and this driver keeps no fallback token, so without
+  # these the snapshot calls have no credential at all and are refused.
+  csi.storage.k8s.io/snapshotter-secret-name: {{ $secret | quote }}
+  csi.storage.k8s.io/snapshotter-secret-namespace: {{ $vsc.secretNamespace | default $.Release.Namespace | quote }}
+  csi.storage.k8s.io/snapshotter-list-secret-name: {{ $secret | quote }}
+  csi.storage.k8s.io/snapshotter-list-secret-namespace: {{ $vsc.secretNamespace | default $.Release.Namespace | quote }}
+{{- end }}
+{{- end }}

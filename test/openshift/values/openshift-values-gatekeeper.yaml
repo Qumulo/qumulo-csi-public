@@ -1,0 +1,46 @@
+# Reference values for OpenShift 4.22 clusters where a policy engine owns RBAC
+# and SCCs: Gatekeeper (or similar) refuses RoleBinding and ClusterRoleBinding
+# changes by the deployment identity, and a platform team applies the
+# bindings and the node SCC instead. Use together with openshift-values.yaml:
+#
+#   helm install qumulo-csi <chart> -n qumulo-csi \
+#     -f openshift-values.yaml -f openshift-values-gatekeeper.yaml -f my-classes.yaml
+#
+# The platform team first applies (as cluster admin):
+#   - the node SCC below (docs/operate/openshift-operations.md, "Let your
+#     cluster admin manage the SCC") and its grant to the node ServiceAccount;
+#   - every binding from
+#       helm template qumulo-csi <chart> -n qumulo-csi -f <the same values> \
+#         --set rbac.createBindings=true --show-only templates/rbac-bindings.yaml
+#
+# Validated on OCP 4.22 by test/openshift/gatekeeper_test.go (admission model)
+# and live on the OCP lab (reports in the PR).
+
+openshift:
+  enabled: true
+  # The cluster's own restricted SCC. Its name starts with "restricted", so
+  # the chart leaves the controller's uid out and OpenShift assigns one from
+  # the namespace's range. For an SCC with another name that also assigns a
+  # uid, set assignControllerUID: true.
+  controllerSCC: restricted-csi
+  assignControllerUID: auto
+  nodeSCC:
+    # Made and granted by the platform team; the chart only pins to it.
+    create: false
+    name: qumulo-csi-node
+
+rbac:
+  # No RoleBinding or ClusterRoleBinding from the chart; the platform team
+  # applies them. The install stops early, naming any that is missing.
+  createBindings: false
+  checkBindings: true
+
+# Only nodes with the Qumulo storage network. Quoted: a nodeSelector value must
+# be a string, and `--set ...hydra_storage=true` would make it a boolean the
+# API server refuses (use --set-string on the command line).
+node:
+  nodeSelector:
+    hydra_storage: "true"
+controller:
+  nodeSelector:
+    hydra_storage: "true"

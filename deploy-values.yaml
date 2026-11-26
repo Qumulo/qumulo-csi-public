@@ -1,0 +1,89 @@
+# Site deployment values -- NOT part of the chart.
+#
+# Kept out of charts/qumulo-csi-driver/values.yaml on purpose: that file ships
+# to end users inside the Helm package, so a cluster address baked into it would
+# be everyone's default. Use this with:
+#
+#   helm upgrade --install qumulo-csi charts/qumulo-csi-driver \
+#     -n qumulo-csi -f deploy-values.yaml
+
+sidecars:
+  snapshotter:
+    enabled: true
+
+volumeSnapshotClasses:
+  - name: qumulo-snapshots
+    deletionPolicy: Delete
+    # Snapshot RPCs carry their own secret parameters -- a StorageClass's
+    # provisioner secret does not reach them -- and the driver keeps no
+    # fallback token, so this is required rather than optional.
+    secretName: qumulo-api-token
+
+controller:
+  logLevel: debug
+node:
+  logLevel: debug
+
+qumulo:
+  # The cluster certificate has no subjectAltName, so verification cannot
+  # succeed. Tracked as blocker B5; see test/live/TLS-VERIFY-PLAN.md.
+  insecureSkipTlsVerify: true
+
+# NOTE on addresses: server and secretName are per StorageClass, not chart-wide,
+# and there is no chart-wide default for either. One deployed controller serves
+# many clusters and holds no address and no credential of its own, so a class
+# that names neither cannot provision -- and the chart's values schema refuses
+# to render it.
+#
+# This file used to set a top-level cluster address, token and managed-path
+# list. All three are gone: server replaced the first and
+# secretName the second, both per class, and ListVolumes no longer
+# takes a configured path list -- it derives the paths to scan from each
+# StorageClass's own basePath. Answering ListVolumes and ControllerGetVolume at
+# all is now opt-in, because doing so means listing StorageClasses through the
+# Kubernetes API rather than being told a cluster by the request:
+#
+#   controller:
+#     inventory:
+#       enabled: true
+#
+# Left off here rather than enabled silently -- it grants the controller
+# cluster-wide read of StorageClasses and Secrets. Turn it on deliberately when
+# a test needs those two RPCs (test/live/inventory_test.go does).
+#
+# NOTE on paths: the only export on this cluster is now
+#   /qumulo-nfs41-csi -> /root
+# so nothing exports /csi/volumes any more and a class pointing there provisions
+# but cannot mount. basePath is the filesystem path; exportBasePath is how that
+# same directory is reachable over NFS.
+storageClasses:
+  - name: qumulo-nfs3
+    server: xx.xx.xx.xx
+    secretName: qumulo-api-token
+    basePath: /root/csi-live-test/volumes
+    exportBasePath: /qumulo-nfs41-csi/csi-live-test/volumes
+    protocol: nfs3
+    # The full list, not just [nolock]: an explicit mountOptions replaces the
+    # chart's [hard, timeo=600] default rather than adding to it, so a bare
+    # [nolock] would quietly give up timeo=600. nolock itself is now optional
+    # here -- the node adds it to any nfs3 mount that does not decide locking --
+    # but it is written out so the PV shows what it will mount with.
+    mountOptions: [hard, "timeo=600", nolock]
+  - name: qumulo-nfs41
+    server: xx.xx.xx.xx
+    secretName: qumulo-api-token
+    basePath: /root/csi-live-test/volumes
+    exportBasePath: /qumulo-nfs41-csi/csi-live-test/volumes
+    protocol: nfs4.1
+  # Required by test/e2e TestE2EDedicatedExport. Provisioning through this
+  # class is expected to FAIL on a cluster with NFSv4 enabled and an ancestor
+  # export -- that refusal is what the test asserts.
+  - name: qumulo-nfs41-dedicated
+    server: xx.xx.xx.xx
+    secretName: qumulo-api-token
+    basePath: /root/csi-live-test/volumes
+    exportBasePath: /qumulo-nfs41-csi/csi-live-test/volumes
+    protocol: nfs4.1
+    provisioningModel: dedicated-export
+    # A test class: an open export is intended (the driver refuses one otherwise).
+    allowAnyClient: true

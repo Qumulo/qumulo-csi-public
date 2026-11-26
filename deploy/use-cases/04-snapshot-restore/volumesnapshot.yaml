@@ -1,0 +1,9 @@
+# Snapshots the PVC from deploy/example/03-expand-volume/, named app-data.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: before-upgrade
+spec:
+  volumeSnapshotClassName: qumulo-snapshots
+  source:
+    persistentVolumeClaimName: app-data

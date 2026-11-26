@@ -1,0 +1,98 @@
+apiVersion: v2
+name: qumulo-csi-driver
+description: CSI driver for provisioning Kubernetes volumes on Qumulo NFS storage
+type: application
+
+# version is the chart's own version; appVersion is the driver's, and tracks
+# the VERSION file at the repo root -- `make helm-lint` fails if they drift.
+# appVersion is quoted so YAML cannot read it as a number.
+version: 0.1.2
+appVersion: "0.1.2"
+
+# The chart requires Kubernetes 1.35.0+.
+#
+# Lowered from 1.36.0 to 1.35.0 on 2026-10-13, to support a customer running
+# 1.35.6. Recorded here rather than left implicit, because the pin still sits
+# above the driver's real floor and that gap is a choice, not an oversight.
+#
+# The driver's own floor is 1.26: it needs CSIDriver v1 with fsGroupPolicy and
+# nothing newer. Nothing in this chart is gated on a Kubernetes version --
+# every conditional is an API *presence* check (`.Capabilities.APIVersions.Has`
+# for ServiceMonitor, VolumeSnapshotClass and VolumeReplicationClass), which is
+# version-agnostic -- and every API group it emits has been GA since long
+# before 1.35: storage.k8s.io/v1, apps/v1, policy/v1, rbac/v1,
+# scheduling.k8s.io/v1, networking.k8s.io/v1.
+#
+# Why 1.35.0 and not 1.35.6, the version the customer runs: kubeVersion
+# expresses a *minor* floor. No API this chart emits changes within a patch
+# series, so a patch-level pin would refuse 1.35.0-1.35.5 for no technical
+# reason. 1.35.6 is what the e2e matrix actually brings up
+# (E2E_K8S_VERSION); 1.35.0 is what the chart is willing to install on, and
+# `make example-check` validates the committed manifests against 1.35.0
+# schemas (KUBECONFORM_K8S_VERSION) because that is the oldest it claims.
+#
+# The pin and the test matrix moved together, which is the rule this file had
+# already set for itself: e2e runs 1.35.6 and 1.36.0, and the goldens are
+# rendered under both. Lowering the pin alone would have traded an honest
+# refusal for an untested claim of support.
+#
+# What the pin still costs: it refuses 1.34, which is in support upstream, and
+# there is no flag that bypasses it. `helm install` refuses against such a
+# cluster, and so does `helm template --kube-version 1.34.0`. Note that Helm
+# v3.19's own default capabilities version is 1.34, *below* this floor, so a
+# bare `helm template` on that Helm still fails -- use the CI-pinned Helm
+# (v3.21.4, default 1.36) or pass --kube-version. Someone on 1.26-1.34 who
+# needs to deploy anyway can render with `helm template --kube-version 1.35.0`
+# and pipe that to `kubectl apply`; the driver itself works there, since its
+# floor really is 1.26.
+#
+# Do not raise the floor above 1.36.0: 1.36.0 is the default capabilities
+# version of the Helm this repo pins, so a higher floor breaks `helm
+# template`, the golden tests and the chart contract tests for anyone
+# rendering without a cluster.
+#
+# The "-0" suffix is load-bearing and must not be dropped. Managed
+# distributions report a version with a build suffix -- EKS answers
+# `v1.35.6-eks-cb19647`, and GKE and RKE2 do the same in their own way -- and
+# semver orders any prerelease *below* the release it qualifies. So a bare
+# ">=1.35.0" would refuse every EKS 1.35 cluster:
+#
+#   Error: chart requires kubeVersion: >=1.35.0 which is incompatible with
+#   Kubernetes v1.35.6-eks-cb19647
+#
+# "-0" is the lowest possible prerelease of 1.35.0, so the constraint admits
+# those suffixed versions without lowering the real floor -- 1.34.x and
+# 1.34.4-eks-... are both still refused. It does also admit a genuine
+# prerelease such as 1.35.0-rc.1, which a bare ">=1.35.0" would have refused.
+# That is accepted deliberately: distinguishing "-rc.1" from "-eks-cb19647"
+# is not something a semver range can express, and refusing every managed
+# distribution is the worse of the two errors.
+kubeVersion: ">=1.35.0-0"
+
+keywords:
+  - csi
+  - qumulo
+  - nfs
+  - storage
+home: https://github.com/qumulo/qumulo-csi-driver
+# Qumulo's own site icon. Shown by the OpenShift console and Artifact Hub.
+icon: https://www.datocms-assets.com/195389/1770871323-image-62.png
+
+# Red Hat's chart certification metadata. chart-verifier's
+# required-annotations-present needs charts.openshift.io/name; the rest feed
+# the OpenShift catalogue. Metadata only: no template reads it, so the
+# rendered install is the same with or without this block.
+#
+# supportURL is the public support portal, not `home`: the repository is
+# private, so customers cannot open its issues page.
+#
+# testedOpenShiftVersion is written by hand and is not read by chart-verifier,
+# whose report takes the tested version from its own chart-testing run.
+# Update it with each OpenShift version this chart is validated on.
+annotations:
+  charts.openshift.io/name: Qumulo CSI Driver
+  charts.openshift.io/provider: Qumulo
+  charts.openshift.io/providerType: partner
+  charts.openshift.io/supportURL: https://care.qumulo.com
+  charts.openshift.io/archs: x86_64,aarch64
+  charts.openshift.io/testedOpenShiftVersion: "4.22"

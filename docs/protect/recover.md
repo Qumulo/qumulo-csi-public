@@ -2,11 +2,13 @@
 
 Three layers, which solve different problems. Use more than one.
 
-| Layer | Protects against | Maturity |
-|---|---|---|
-| CSI `VolumeSnapshot` | accidental deletion, a bad application release | GA |
-| Scheduled Qumulo snapshot policies | the same, without Kubernetes being involved | GA |
-| Qumulo replication to a peer array | loss of a site or an array | GA |
+| Layer | Protects against | Restored by | Maturity |
+|---|---|---|---|
+| Kubernetes snapshots (`VolumeSnapshot`) | accidental deletion, a bad application release | a PVC with a `dataSource` | GA |
+| Scheduled snapshots (`snapshotSchedule`) | the same, and a `VolumeSnapshot` deleted by mistake | copying from `.snapshot`; by the storage administrator once the volume is deleted | GA |
+| Qumulo replication to a peer array | loss of a site or an array | promoting the DR copy | Supported, opt-in |
+
+The [four kinds of snapshot](snapshot.md) and how to tell them apart.
 
 Set each layer up first — [Snapshot a volume](snapshot.md),
 [Replicate to a DR array](replicate.md) — then use this page when something
@@ -18,8 +20,8 @@ See [Snapshot a volume](snapshot.md) for the full mechanics. The operational
 points:
 
 !!! tip "Use both snapshot mechanisms"
-    A `VolumeSnapshot` can be destroyed with `kubectl delete`. A
-    `snapshotSchedule` policy snapshot **cannot** — it is deliberately not
+    A Kubernetes snapshot can be destroyed with `kubectl delete`. A
+    scheduled snapshot **cannot** — it is deliberately not
     surfaced as a Kubernetes object, and `DeleteSnapshot` refuses it. That is
     what makes it a safety net rather than another thing an operator can drop.
 
@@ -86,8 +88,8 @@ Details and the handle format: [Restore from a backup tool's snapshot](restore.m
 
 | Scenario | Action |
 |---|---|
-| A file or directory deleted by the application | restore a snapshot to a new PVC, copy the needed data back |
-| A PVC deleted by mistake | restore from the most recent `VolumeSnapshot`, or from the Qumulo policy snapshot on the array |
+| A file or directory deleted by the application | copy it back from `/<mount>/.snapshot/<snapshot>/` ([scheduled](restore.md#the-volume-still-exists-copy-from-snapshot) or Kubernetes snapshot), or restore a Kubernetes snapshot to a new PVC and copy from there |
+| A PVC deleted by mistake | restore from the most recent `VolumeSnapshot`; with only scheduled snapshots, the [storage administrator copies one out](restore.md#the-volume-is-deleted-ask-the-storage-administrator) before its `keep=` expires |
 | A corrupt volume | restore to a **new** PVC and cut over; do not restore over the live one |
 | An array unreachable | the `hard` mount pauses and resumes; pods block rather than losing data |
 | An array or site lost | promote the DR copy, then repoint claims |

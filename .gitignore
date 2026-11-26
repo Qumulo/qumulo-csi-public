@@ -1,2 +1,69 @@
+# --- Go build output -----------------------------------------------------
+# `make build` and `make mock-server` write here. Binaries are never committed.
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Test binaries (`go test -c`), coverage profiles and other test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+# Go workspace files and vendored modules
+go.work
+go.work.sum
+vendor/
+
+# --- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+*.egg-info/
+.coverage
+htmlcov/
+
+# --- Secrets and local configuration (never commit) ---------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*kubeconfig*
+# Array API tokens saved at the repo root for local live runs
+/token*.txt
+
+# --- Local run output (carries real cluster addresses) ------------------
+test/live/results/
+
+# --- AI assistant and editor context ------------------------------------
+CLAUDE.md
+.claude/
+.cursor/
+.cursorrules
+.idea/
+.vscode/
+
+# --- OS metadata ---------------------------------------------------------
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# --- Docs and generated sources ------------------------------------------
+# MkDocs build output and cache
 site/
 .cache/
+# csi-addons sidecar source, fetched by make csi-addons-sidecar-src
+/build/csi-addons-sidecar/.src/

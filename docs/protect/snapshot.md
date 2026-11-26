@@ -1,19 +1,55 @@
 # Snapshot a volume
 
-Two independent mechanisms, which work on the same volume:
+Every snapshot of a volume is a snapshot on the Qumulo array. What differs is
+who takes it, whether Kubernetes can see it, and who may delete it. This driver
+uses four names for them, and so do these docs:
 
-| | CSI `VolumeSnapshot` | Scheduled (`snapshotSchedule`) |
-|---|---|---|
-| Driven by | Kubernetes | a Qumulo snapshot policy |
-| Visible to Kubernetes | yes | **deliberately not** |
-| Restorable by a PVC | yes | no |
-| Deletable with `kubectl` | yes | no |
-| Purpose | application-driven points in time | an administrator's safety net |
+| | Kubernetes snapshot | Scheduled snapshot | Imported snapshot | Array-internal snapshot |
+|---|---|---|---|---|
+| Taken by | `csi-snapshotter`, for a `VolumeSnapshot` | the array, from the StorageClass `snapshotSchedule` | an administrator or a backup tool, on the array | the array or the driver, during replication |
+| Name on the array | `<id>_snapshot-<VolumeSnapshot UID>` | `<id>_csi-<pv-name>_<pv-name>` | whatever its taker chose | `<id>_revert_to_…`, `<id>_replication_…`, `<id>_csi-unpromoted-…`, `<id>_csi-reprotect-check-…` |
+| Seen with `kubectl` | yes | **no, deliberately** | once you create a `VolumeSnapshotContent` for it | no |
+| Restore | a PVC `dataSource` | copy from `.snapshot` — [Restore from a scheduled snapshot](restore.md#restore-from-a-scheduled-snapshot) | a PVC `dataSource` | not for restore |
+| Delete | `kubectl delete volumesnapshot`, with class `deletionPolicy: Delete` | expires by the schedule's `keep=`; the driver never deletes one | needs `allowForeignSnapshotDelete` | expires on its own |
+| Replicated with `linkSnapshotPolicy` | no | yes | no | — |
+| After the PVC is deleted | kept until you delete the `VolumeSnapshot` | kept until `keep=` expires | kept | — |
+| Purpose | application-driven points in time | an administrator's safety net | backups taken outside Kubernetes | none of yours |
 
-This page covers both. For getting data back, see
+"Kubernetes snapshot" and "scheduled snapshot" are independent and work on the
+same volume; use both. For getting data back, see
 [Restore from a snapshot](restore.md).
 
-## Enable CSI snapshots
+## Tell them apart
+
+**From a pod.** Every directory of a volume has a hidden `.snapshot` folder,
+readable over NFSv3 and NFSv4.1. It does not appear in `ls -a`, but opens by
+name and lists every snapshot of the volume, of every kind:
+
+```bash
+kubectl -n my-app exec deploy/my-app -- ls /data/.snapshot
+# 419486_csi-pvc-3f6c…_pvc-3f6c…          <- scheduled
+# 419510_snapshot-9d2e41b0-…              <- Kubernetes snapshot
+```
+
+**From Kubernetes.** A Kubernetes snapshot's array ID is the last field of its
+content's handle (`<server>##<id>`, or `<server>#<apiUrl>#<id>`):
+
+```bash
+kubectl get volumesnapshotcontent \
+  -o custom-columns=NAME:.metadata.name,HANDLE:.status.snapshotHandle
+```
+
+**On the array.** The snapshot list marks a scheduled snapshot as created by a
+policy (`created_by_policy: true`, or a `policy_id`); that, not the name, is how
+the driver tells one from its own. The policy for a volume is named
+`csi-<pv-name>`. The `csi-` prefix marks the driver as the policy's owner; the
+snapshots it takes are still scheduled snapshots, not Kubernetes snapshots.
+
+!!! note "`.snapshot` shows old data to anyone who can mount the volume"
+    A file deleted from the volume stays readable under `.snapshot` until every
+    snapshot holding it expires or is deleted. Plan retention with that in mind.
+
+## Enable Kubernetes snapshots
 
 The cluster needs the shared snapshot machinery first — it is installed once by
 an administrator and is not this chart's to own:
@@ -62,7 +98,7 @@ kubectl -n my-app get volumesnapshot shared-data-2026-10-16
 
 ## Delete a snapshot
 
-!!! warning "A snapshot this driver did not take is not deleted unless you say so"
+!!! warning "An imported snapshot is not deleted unless you say so"
     The array records nothing about who took a snapshot except its name.
     `csi-snapshotter` names every snapshot `<prefix>-<volumesnapshot-uid>`, and
     `DeleteSnapshot` deletes only a snapshot with that shape whose source is
@@ -111,9 +147,14 @@ so a year is `12months`.
 !!! note "These snapshots are invisible to Kubernetes on purpose"
     Handing the CO a snapshot it never asked for would mean
     `kubectl delete volumesnapshot` could destroy a scheduled backup.
-    `DeleteSnapshot` refuses a policy-created snapshot too. One policy per
+    `DeleteSnapshot` refuses a scheduled snapshot too. One policy per
     volume, named `csi-<volume>`; a policy an administrator created on the same
     directory is never adopted or deleted.
+
+    To get data back from a scheduled snapshot, see
+    [Restore from a scheduled snapshot](restore.md#restore-from-a-scheduled-snapshot).
+    When the volume is deleted, its policy goes with it, but the snapshots the
+    policy already took stay on the array until their `keep=` expires.
 
 ## Limits
 

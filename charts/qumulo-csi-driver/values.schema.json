@@ -1,0 +1,1342 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "qumulo-csi-driver values",
+  "description": "Values validated at install time. Enum members are kept in step with what the driver accepts; the templates in _validate.tpl carry the checks JSON Schema cannot express, such as cross-field rules.",
+  "type": "object",
+  "required": [
+    "driverName",
+    "qumulo"
+  ],
+  "properties": {
+    "driverName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin name; must match the CSIDriver object and every StorageClass provisioner."
+    },
+    "fsGroupPolicy": {
+      "type": "string",
+      "enum": [
+        "None",
+        "File",
+        "ReadWriteOnceWithFSType"
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Prometheus metrics. Nothing is polled, so every array-side figure is the last value an RPC produced. See docs/reference/metrics.md.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Serves /metrics on the driver, gives the CSI sidecars --http-endpoint, and renders a Service per workload."
+        },
+        "forceEnable": {
+          "type": "boolean",
+          "description": "Render the ServiceMonitor and PrometheusRule without checking for the monitoring.coreos.com/v1 CRD, for `helm template` into a GitOps repo."
+        },
+        "port": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Ports, continuing the chart's 2965x range. The node port is a HOST port: the node DaemonSet runs with hostNetwork: true.",
+          "properties": {
+            "controller": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "node": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "provisioner": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "resizer": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "snapshotter": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Merged onto both metrics Services, for a Prometheus that discovers by annotation."
+            }
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A NetworkPolicy admitting the controller's metrics ports only from these peers. The livenessprobe and csi-addons ports stay open.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "NetworkPolicy ingress peers (namespaceSelector, podSelector, ipBlock)."
+            }
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Prometheus Operator ServiceMonitor. Rendered only when the monitoring.coreos.com/v1 CRD is present, or forceEnable is set.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)$",
+              "description": "Scrape interval, as a Prometheus duration."
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(ms|s|m|h)$",
+              "description": "Scrape timeout, as a Prometheus duration."
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Extra labels, for a Prometheus whose serviceMonitorSelector needs one."
+            }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Starter alerting rules. Same CRD guard as the ServiceMonitor.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "policyIntervalFactor": {
+              "type": "number",
+              "exclusiveMinimum": 1,
+              "description": "With a policy-mode relationship's schedule interval known, the stale threshold is this many intervals, never below recoveryPointAgeSeconds."
+            },
+            "unknownModeRecoveryPointAgeSeconds": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "description": "recoveryPointAgeSeconds for a relationship read only from its target array, which reports no mode. Unset: policyModeRecoveryPointAgeSeconds."
+            },
+            "policyModeRecoveryPointAgeSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "recoveryPointAgeSeconds for policy-mode relationships (REPLICATION_SNAPSHOT_POLICY), whose recovery point advances only when a scheduled snapshot replicates. About 1.5 x the longest policy-mode schedule interval."
+            },
+            "recoveryPointAgeSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Replication recovery-point age, in seconds, that means the replica is too far behind. Age and not state: a target array reports ESTABLISHED with a dead source."
+            },
+            "volumeNearQuotaRatio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "description": "Fraction of a volume's quota that counts as nearly full."
+            }
+          }
+        },
+        "dashboard": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Grafana dashboard (dashboards/qumulo-csi.json) as a ConfigMap. Needs metrics.enabled. The default label is the kube-prometheus-stack Grafana sidecar's; for the OpenShift console use namespace openshift-config-managed and label console.openshift.io/dashboard: \"true\".",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$",
+              "description": "Namespace for the ConfigMap. Empty means the release namespace."
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Labels the dashboard importer selects on."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Extra annotations, e.g. grafana_folder."
+            }
+          }
+        }
+      }
+    },
+    "qumulo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiTimeout": {
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+          "description": "Per-call timeout of the driver's REST client, as a Go duration such as 10s or 1m30s. Zero is refused: it would mean no timeout at all."
+        },
+        "caBundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingConfigMap": {
+              "type": "string",
+              "description": "ConfigMap holding a PEM CA bundle to trust for the Qumulo API. Refused together with insecureSkipTlsVerify: true, which would supply a CA and then ignore it."
+            },
+            "key": {
+              "type": "string",
+              "description": "Entry in that ConfigMap holding the PEM, and the filename it is mounted as. Required when existingConfigMap is set."
+            }
+          }
+        },
+        "insecureSkipTlsVerify": {
+          "type": "boolean"
+        }
+      }
+    },
+    "storageClasses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "basePath",
+          "name",
+          "secretName",
+          "server"
+        ],
+        "properties": {
+          "adDomain": {
+            "type": "string",
+            "description": "Nests this class's volumes under a directory named for an AD domain. Layout only, not access control. Format is validated by the driver, not here, so a bad value fails identically whether it came from this chart or a hand-written StorageClass."
+          },
+          "allowVolumeExpansion": {
+            "type": "boolean"
+          },
+          "allowedClients": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "pattern": "^(((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(/(3[0-2]|[12]?[0-9]))?|[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*(/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))?)$",
+              "description": "An IPv4 or IPv6 address, or a CIDR block."
+            },
+            "description": "IPs/CIDRs permitted to mount. Host names are refused by the driver when it parses the class, since a name would resolve at mount time -- so they are refused here too, at install, rather than at the first provision. The 256 cap is the driver's own. dedicated-export only."
+          },
+          "apiUrl": {
+            "type": "string",
+            "description": "REST endpoint for this class's cluster; defaults to https://<server>:8000."
+          },
+          "basePath": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "exportBasePath": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "mountOptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mountPermissions": {
+            "type": "string",
+            "pattern": "^([0-7]{3,4}|inherit|INHERIT|Inherit)$",
+            "description": "Octal mode for the volume directory, or inherit to keep the cluster default. Defaults to 0777 because the cluster creates directories owned by the API user at 0755, which an NFS-mapped pod cannot write to."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "",
+              "nfs3",
+              "nfs4.1"
+            ],
+            "description": "NFS version to mount with. Empty lets the kernel negotiate."
+          },
+          "provisioningModel": {
+            "type": "string",
+            "enum": [
+              "",
+              "shared-subdirectory",
+              "dedicated-export"
+            ],
+            "description": "dedicated-export gives each volume its own NFS export, at one export-table entry per volume."
+          },
+          "reclaimPolicy": {
+            "type": "string",
+            "enum": [
+              "Delete",
+              "Retain"
+            ]
+          },
+          "secretName": {
+            "type": "string",
+            "description": "Required. Secret holding this cluster's API token under key 'token'. There is no chart-wide default: one release serves many clusters and holds no credential of its own."
+          },
+          "secretNamespace": {
+            "type": "string",
+            "description": "Namespace of secretName; defaults to the release namespace."
+          },
+          "securityFlavor": {
+            "type": "string",
+            "enum": [
+              "",
+              "sys",
+              "krb5",
+              "krb5i",
+              "krb5p"
+            ],
+            "description": "Makes the export require this flavour and the node mount with it. Anything but sys needs provisioningModel dedicated-export, protocol nfs4.1 and node.kerberos.enabled; those cross-parameter rules are enforced at render time."
+          },
+          "server": {
+            "type": "string"
+          },
+          "snapshotSchedule": {
+            "type": "string",
+            "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*((every=(\\+?0*([1-9]|[1-5][0-9])m|\\+?0*([1-9]|1[0-9]|2[0-3])h)|daily@[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*(1?[0-9]|2[0-3])|-0+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*[1-5]?[0-9]|-0+)|weekly@[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*([Ss][Uu][Nn]([Dd][Aa][Yy])?|[Mm][Oo][Nn]([Dd][Aa][Yy])?|[Tt][Uu][Ee]([Ss][Dd][Aa][Yy])?|[Ww][Ee][Dd]([Nn][Ee][Ss][Dd][Aa][Yy])?|[Tt][Hh][Uu]([Rr][Ss][Dd][Aa][Yy])?|[Ff][Rr][Ii]([Dd][Aa][Yy])?|[Ss][Aa][Tt]([Uu][Rr][Dd][Aa][Yy])?)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*(1?[0-9]|2[0-3])|-0+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*[1-5]?[0-9]|-0+)|monthly@[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*([1-9]|1[0-9]|2[0-7])|[Ll][Aa][Ss][Tt])[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*(1?[0-9]|2[0-3])|-0+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(\\+?0*[1-5]?[0-9]|-0+))([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)*(([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)keep=(\\+?0*[1-9][0-9]?(minutes|hours|days|weeks|months)|[Nn][Ee][Vv][Ee][Rr])([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)*(([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)tz=[A-Za-z0-9_+./-]+([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)*)?|([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)tz=[A-Za-z0-9_+./-]+([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)*(([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)keep=(\\+?0*[1-9][0-9]?(minutes|hours|days|weeks|months)|[Nn][Ee][Vv][Ee][Rr])([\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*,[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*)*)?)?)?[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$",
+            "description": "Qumulo snapshot policy schedule, e.g. \"daily@02:00,keep=7days\". Accepted forms: every=Nm (1-59), every=Nh (1-23), daily@HH:MM, weekly@DAY,HH:MM, monthly@D,HH:MM (D 1-27 or last), each optionally followed by ,keep=<duration> and ,tz=<zone>, each at most once and in either order. The pattern admits exactly what the driver parses -- spaces around terms, one-digit hours, leading zeros, empty terms such as a trailing comma -- and refuses the rest at install (hourly@ and hourly:MM are not forms). The zone name is not checked by this pattern but at render, against the driver's own IANA zone list (templates/_tzzones.tpl): an unknown or wrong-case zone fails the install as it would fail every claim. tz=Local is refused here: it names the controller's own clock, not a zone the array can use. Zone names are case-sensitive (UTC, not utc). Snapshots it takes are not surfaced as VolumeSnapshots.",
+            "not": {"pattern": "(^|,)\\s*tz=\\s*Local\\s*(,|$)"}
+          },
+          "tenantID": {
+            "type": [
+              "string",
+              "integer"
+            ],
+            "minimum": 1,
+            "description": "Qumulo network tenant for this class's exports, by id or by name -- hence either type. An id is 1 or greater: the cluster numbers tenants from 1, and the driver treats 0 as \"no tenant named\", so tenantID: 0 asks for something that does not exist. An empty string is the same as leaving it out: the template renders no tenantID. dedicated-export only."
+          },
+          "allowAnyClient": {
+            "type": "boolean",
+            "description": "This dedicated-export class admits any NFS client on purpose. Without it, a dedicated-export class with no allowedClients is refused. Not rendered into the StorageClass, so setting it on an existing class changes nothing on the cluster."
+          },
+          "allowForeignSnapshotRestore": {
+            "type": "boolean",
+            "description": "Lets this class restore a snapshot not named as this driver's are (sidecars.snapshotter.snapshotNamePrefix) whose source directory is gone. Rendered as the allowForeignSnapshotRestore parameter, so like every parameter it cannot change on an existing class."
+          }
+        }
+      }
+    },
+    "volumeSnapshotClasses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "deletionPolicy": {
+            "type": "string",
+            "enum": [
+              "Delete",
+              "Retain"
+            ]
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "secretName": {
+            "type": "string"
+          },
+          "secretNamespace": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "volumeReplicationClasses": {
+      "type": "array",
+      "description": "VolumeReplicationClasses for csi-addons replication (supported, opt-in). Each names the peer array and a Secret holding a token per array.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "targetServer",
+          "secretName"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetServer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetApiUrl": {
+            "type": "string"
+          },
+          "apiUrl": {
+            "type": "string"
+          },
+          "targetBasePath": {
+            "type": "string"
+          },
+          "replicationMode": {
+            "type": "string",
+            "enum": [
+              "continuous",
+              "policy",
+              "policy+continuous"
+            ]
+          },
+          "linkSnapshotPolicy": {
+            "type": "boolean"
+          },
+          "schedulingInterval": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$"
+          },
+          "allowNonEmptyTarget": {
+            "type": "boolean"
+          },
+          "replicationScope": {
+            "type": "string",
+            "enum": [
+              "volume",
+              "group"
+            ]
+          },
+          "secretName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "secretNamespace": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "controller": {
+      "type": "object",
+      "properties": {
+        "proxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "HTTP(S) proxy for the controller's Qumulo API calls. Empty: no proxy.",
+          "properties": {
+            "httpsProxy": {"type": "string"},
+            "httpProxy": {"type": "string"},
+            "noProxy": {"type": "string"}
+          }
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "leaderElection": {
+          "type": "boolean"
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "properties": {
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "RuntimeDefault",
+                    "Unconfined",
+                    "Localhost"
+                  ]
+                },
+                "localhostProfile": {
+                  "type": "string"
+                }
+              }
+            },
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fsGroup": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "securityContext": {
+          "type": "object",
+          "properties": {
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "privileged": {
+              "type": "boolean"
+            },
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "drop": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serves ListVolumes and ControllerGetVolume, which means discovering clusters by listing StorageClasses through the Kubernetes API. Off by default; see rule 0 in ARCHITECTURE.md."
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources for the qumulo-csi-driver container. Passed to Kubernetes verbatim."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Pod nodeSelector. Passed to Kubernetes verbatim."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Pod tolerations. Passed to Kubernetes verbatim."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Pod affinity. Passed to Kubernetes verbatim."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations added to the controller pod template."
+        },
+        "sidecarResources": {
+          "type": "object",
+          "description": "Resources for every controller sidecar container except csi-provisioner and csi-resizer. Passed to Kubernetes verbatim."
+        },
+        "resizerResources": {
+          "type": "object",
+          "description": "Resources for the csi-resizer container, which caches every claim and PersistentVolume. Passed to Kubernetes verbatim."
+        },
+        "provisionerResources": {
+          "type": "object",
+          "description": "Resources for the csi-provisioner container, which caches every claim and PersistentVolume. Passed to Kubernetes verbatim."
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "PriorityClass of the controller pod; \"\" sets none."
+        },
+        "leaderElectionTimings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "leaseDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m|h)$"
+            },
+            "renewDeadline": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m|h)$"
+            },
+            "retryPeriod": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m|h)$"
+            }
+          },
+          "description": "Lease flags for the provisioner, resizer and snapshotter."
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "description": "A maxUnavailable: 1 PDB, rendered with more than one replica."
+        },
+        "strategy": {
+          "type": "object",
+          "description": "The Deployment's update strategy, verbatim."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "The pod's topologySpreadConstraints, verbatim."
+        },
+        "hostNetwork": {
+          "type": "boolean",
+          "description": "Run the controller pods on the node's network, for arrays reachable only from the nodes' own routes. Its ports become node ports; replicas are kept on different nodes. On OpenShift, selects and grants hostnetwork-v2."
+        },
+        "dnsPolicy": {
+          "type": "string",
+          "enum": ["", "ClusterFirst", "ClusterFirstWithHostNet", "Default", "None"],
+          "description": "The controller pod's dnsPolicy. Empty: ClusterFirstWithHostNet with hostNetwork, else Kubernetes' default."
+        }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "properties": {
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "unmountTimeout": {
+          "description": "How long NodeUnpublishVolume waits for a plain umount(8) before escalating to a forced and then a lazy unmount. A Go duration; empty keeps the driver default of 30s and renders no argument. The driver cuts it to fit the kubelet's two-minute unmount deadline with room for the escalation, so values past about 100s have no further effect.",
+          "type": "string",
+          "pattern": "^$|^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+        },
+        "kubeletDir": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "properties": {
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "RuntimeDefault",
+                    "Unconfined",
+                    "Localhost"
+                  ]
+                },
+                "localhostProfile": {
+                  "type": "string"
+                }
+              }
+            },
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fsGroup": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "driverSecurityContext": {
+          "type": "object",
+          "properties": {
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "privileged": {
+              "type": "boolean"
+            },
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "drop": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "registrarSecurityContext": {
+          "type": "object",
+          "properties": {
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "privileged": {
+              "type": "boolean"
+            },
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "drop": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "livenessProbeSecurityContext": {
+          "type": "object",
+          "properties": {
+            "runAsNonRoot": {
+              "type": "boolean"
+            },
+            "runAsUser": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "privileged": {
+              "type": "boolean"
+            },
+            "allowPrivilegeEscalation": {
+              "type": "boolean"
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "drop": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kerberos": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Mounts a keytab and krb5.conf into the node plugin. Required by any class whose securityFlavor is krb5, krb5i or krb5p."
+            },
+            "keytabPath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "krb5ConfPath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "hostPathType": {
+              "type": "string",
+              "enum": [
+                "FileOrCreate",
+                "File"
+              ],
+              "description": "hostPath type of the keytab and krb5.conf mounts."
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Container resources for the node pods: per container under registrar, livenessProbe and driver, or the older flat form ({requests, limits}) applied to all three. Passed to Kubernetes verbatim. A flat form takes precedence over any per-container key set alongside it."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Pod nodeSelector. Passed to Kubernetes verbatim."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Pod tolerations. Defaults to Exists so the plugin lands on every node, including tainted ones."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Pod affinity. Passed to Kubernetes verbatim."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations added to the node pod template."
+        },
+        "priorityClassName": {
+          "type": "string",
+          "description": "PriorityClass for the node DaemonSet pods, instead of the chart-created one (priorityClass). system-node-critical where the cluster admits it outside kube-system."
+        },
+        "priorityClass": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "description": "Create <release>-node-critical and give it to the node pods when priorityClassName is empty."
+            },
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000,
+              "description": "The PriorityClass value; at most 1000000000, the ceiling for a non-system class."
+            },
+            "preemptionPolicy": {
+              "type": "string",
+              "enum": ["", "PreemptLowerPriority", "Never"],
+              "description": "Empty: Never for a new class, the live policy for an existing one (the field is immutable). PreemptLowerPriority keeps a re-rolled node plugin from staying Pending on a packed node."
+            }
+          }
+        },
+        "registrarHealthPort": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "The node-driver-registrar's /healthz port: a host port on the node's own address, read by the registrar container's own probes. 0 is node.healthPort + 6 (29659 by default), so a second release with its own healthPort gets its own registrar port. The pod's readiness also waits for the plugin's registration."
+        },
+        "minReadySeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Seconds a node pod must be Ready before it counts as available."
+        },
+        "healthPort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "The node livenessprobe's /healthz port. A host port, bound to the node's own address."
+        },
+        "updateStrategy": {
+          "type": "object",
+          "description": "The node DaemonSet's update strategy, verbatim."
+        }
+      },
+      "additionalProperties": false
+    },
+    "nameOverride": {
+      "type": "string",
+      "description": "Replaces the chart name in resource names. Empty uses the chart name."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Replaces the full release-qualified resource name prefix outright."
+    },
+    "commonLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Labels added to every object the chart renders. Values must be strings: an unquoted number here renders as a label value Kubernetes rejects."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controller": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag; empty means the chart's appVersion, which is the VERSION file. Overriding it here decouples the image from the chart, so a release no longer describes what is deployed."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Empty chooses from the tag: Always for a bare release tag such as 0.1.1, which every publish moves; IfNotPresent for a build tag (0.1.1-<commit>) or a digest, which name one image for good."
+            }
+          },
+          "description": "Controller image. UBI micro: it only speaks HTTPS to the Qumulo API."
+        },
+        "node": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag; empty means the chart's appVersion, which is the VERSION file. Overriding it here decouples the image from the chart, so a release no longer describes what is deployed."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Empty chooses from the tag: Always for a bare release tag such as 0.1.1, which every publish moves; IfNotPresent for a build tag (0.1.1-<commit>) or a digest, which name one image for good."
+            }
+          },
+          "description": "Node image. Cannot be distroless -- mount-utils execs mount(8) and needs mount.nfs, so this image carries a userland."
+        },
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "description": "imagePullSecrets for both workloads, for a private or air-gapped registry."
+        }
+      }
+    },
+    "sidecars": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provisioner": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "extraCreateMetadata": {
+              "type": "boolean",
+              "description": "Passes PVC name and namespace to CreateVolume. The driver accepts and ignores them."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+              "description": "Per-call timeout passed to the sidecar, as a Go duration."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own -- e.g. --worker-threads, --kube-api-qps, --kube-api-burst, --retry-interval-start."
+            }
+          },
+          "description": "csi-provisioner: watches PVCs and calls CreateVolume/DeleteVolume."
+        },
+        "resizer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+              "description": "Per-call timeout passed to the sidecar, as a Go duration."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own -- e.g. --worker-threads, --kube-api-qps, --kube-api-burst, --retry-interval-start."
+            }
+          },
+          "description": "csi-resizer: calls ControllerExpandVolume when a PVC grows."
+        },
+        "livenessProbe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            }
+          },
+          "description": "livenessprobe: exposes the driver's Probe RPC as an HTTP health endpoint."
+        },
+        "nodeDriverRegistrar": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own -- e.g. --worker-threads, --kube-api-qps, --kube-api-burst, --retry-interval-start."
+            }
+          },
+          "description": "node-driver-registrar: registers the node plugin with the kubelet."
+        },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Publishes a CSIStorageCapacity object per StorageClass from GetCapacity. Informational: this chart's classes use Immediate binding, so the scheduler does not use them."
+            }
+          }
+        },
+        "snapshotter": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "enabled": {
+              "type": "boolean",
+              "description": "csi-snapshotter. Off by default: it needs the VolumeSnapshot CRDs installed cluster-wide first."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+              "description": "Per-call timeout passed to the sidecar, as a Go duration."
+            },
+            "snapshotNamePrefix": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\s/]+$",
+              "description": "Passed to the sidecar as --snapshot-name-prefix and to the driver as -snapshot-name-prefix. The driver takes a snapshot named otherwise for a foreign one: DeleteSnapshot needs allowForeignSnapshotDelete in the deletion Secret. Changing it makes existing snapshots foreign."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own -- e.g. --worker-threads, --kube-api-qps, --kube-api-burst, --retry-interval-start. Not --snapshot-name-prefix: set snapshotNamePrefix, which the driver needs too."
+            }
+          },
+          "description": "csi-snapshotter: drives CreateSnapshot/DeleteSnapshot."
+        },
+        "healthMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "external-health-monitor controller. Needs controller.inventory.enabled; records health on PVCs from Kubernetes 1.37 with the CSIVolumeHealth gate."
+            },
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+              "description": "Per-call timeout passed to the sidecar, as a Go duration."
+            },
+            "monitorInterval": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+              "description": "How often each bound volume's health is read, as a Go duration."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own."
+            }
+          },
+          "description": "external-health-monitor controller: ControllerGetVolumeHealth onto pvc.status.healthStatus."
+        },
+        "csiAddons": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "csi-addons k8s-sidecar for volume replication. Supported, opt-in. Off by default: it needs the csi-addons CRDs and controller installed cluster-wide first."
+            },
+            "image": {
+              "type": "string",
+              "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$",
+              "description": "A pinned image: <name>:<tag>@sha256:<digest> (the default), <name>:<tag> or <name>@sha256:<digest>. An image with neither a tag nor a digest floats and is refused; so is the tag latest (in _validate.tpl)."
+            },
+            "controllerPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port the csi-addons controller reaches the sidecar on."
+            },
+            "revertSnapshotRetention": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+              "description": "How long the array keeps the snapshot it takes of a replication target before each revert (promote, DR drill, resync, failback). The array sets no expiry on it; the driver sets this one. \"0s\" leaves them never expiring."
+            },
+            "extraArgs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^--"
+              },
+              "description": "Further arguments for this sidecar, verbatim, after the chart's own -- e.g. --worker-threads, --kube-api-qps, --kube-api-burst, --retry-interval-start."
+            }
+          },
+          "description": "csi-addons k8s-sidecar: turns VolumeReplication objects into replication RPCs on the driver."
+        }
+      }
+    },
+    "allowClassRemoval": {
+      "type": "boolean",
+      "description": "Allow an upgrade to render fewer classes than the release manages. Removed classes are kept on the cluster."
+    },
+    "requireAllowedClients": {
+      "type": "boolean",
+      "description": "Refuse a dedicated-export StorageClass with no allowedClients unless it sets allowAnyClient: true or a Kerberos securityFlavor. On by default; false is a one-release escape hatch for upgrades."
+    },
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "clusterWideSecrets": {
+          "type": "boolean",
+          "description": "Cluster-wide get on Secrets instead of the named ones."
+        },
+        "extraSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "secretName"
+            ],
+            "properties": {
+              "secretName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "secretNamespace": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Further Secrets the controller may read."
+        },
+        "createBindings": {
+          "type": "boolean",
+          "description": "Render the chart's RoleBindings and ClusterRoleBindings. false: none, for a platform team to apply (templates/rbac-bindings.yaml)."
+        },
+        "checkBindings": {
+          "type": "boolean",
+          "description": "With createBindings false, refuse the install while a required binding is missing or wrong (read-only lookup). false skips the check."
+        }
+      }
+    },
+    "openshift": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OpenShift SCC handling: the node plugin's own SCC and the controller without a fixed uid.",
+      "properties": {
+        "enabled": {
+          "enum": ["auto", true, false],
+          "description": "auto: on when the cluster serves security.openshift.io/v1 SecurityContextConstraints. true for offline renders (helm template, GitOps)."
+        },
+        "controllerSCC": {
+          "type": "string",
+          "description": "The SCC the controller pods and the helm test pods are pinned to (openshift.io/required-scc). Empty: hostnetwork-v2 with controller.hostNetwork, else restricted-v2."
+        },
+        "controllerSCCRole": {
+          "type": "string",
+          "description": "With controller.hostNetwork, the ClusterRole granting use of controllerSCC to the controller service account. Empty: system:openshift:scc:<controllerSCC>."
+        },
+        "testSCC": {
+          "type": "string",
+          "description": "The SCC the helm test pods are pinned to. Empty: controllerSCC, or restricted-v2 with controller.hostNetwork."
+        },
+        "assignControllerUID": {
+          "enum": ["auto", true, false],
+          "description": "Leave the controller's runAsUser/runAsGroup out so OpenShift assigns a uid. auto: when controllerSCC starts with restricted."
+        },
+        "nodeSCC": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "description": "Render the node SCC and grant it to the node service account. false: pin to name, made and granted by the cluster admin."
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 253,
+              "description": "Empty: <namespace>-<fullname>-node, or <fullname>-node when the release is named after its namespace."
+            }
+          }
+        },
+        "trustedCABundle": {
+          "type": "boolean",
+          "description": "Trust the cluster's injected CA bundle for the Qumulo API (config.openshift.io/inject-trusted-cabundle). Not with qumulo.caBundle or insecureSkipTlsVerify."
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "helm test: a readiness check (always) and a write-and-read volume test on tests.storageClass (opt-in).",
+      "properties": {
+        "ready": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean", "description": "The readiness test and its read-only ServiceAccount and RBAC."},
+            "image": {"type": "string", "pattern": "^$|^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$", "description": "Empty: the controller image, which runs the check as `qumulo-csi-driver ready-check`. Otherwise a mirror of the controller image, pinned: a tag, a digest, or both."}
+          }
+        },
+        "storageClass": {"type": "string", "description": "The class the volume test claims from. Empty: no volume test."},
+        "size": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$", "description": "The test claim's requested size."},
+        "image": {"type": "string", "pattern": "^[^\\s@]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$", "description": "An image with a POSIX shell, cat and sync, pinned: a tag, a digest, or both."},
+        "imagePullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    }
+  },
+  "additionalProperties": false
+}

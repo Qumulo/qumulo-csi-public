@@ -1,0 +1,232 @@
+{{- $fullname := include "qumulo-csi-driver.fullname" . -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+---
+# The node service makes no Kubernetes API calls and no Qumulo API calls. It
+# gets an identity for auditing, and no permissions at all.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+---
+# The RoleBindings and the ClusterRoleBinding that give these roles to the
+# service accounts are in rbac-bindings.yaml, all in one place, so that
+# rbac.createBindings=false can leave every one of them to a platform team.
+#
+# Permissions required by the deployed sidecars, scoped to what they actually
+# call. There is no attacher, so no volumeattachments. The snapshot resources
+# appear only when sidecars.snapshotter.enabled is set.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-controller
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+rules:
+  # Per-cluster API tokens. csi-provisioner and csi-resizer read the Secret a
+  # StorageClass names in csi.storage.k8s.io/*-secret-name and deliver its
+  # contents in the RPC's secrets map -- which is how one controller
+  # authenticates to several Qumulo clusters.
+  #
+  # With sidecars.capacity.enabled, the driver container reads the same Secrets
+  # itself. That needs no extra rule: every container in the pod shares this
+  # ServiceAccount, so the driver already had this right and capacity reporting
+  # adds no privilege. It only changes which container exercises it: the
+  # request names the Secret to read, so the driver resolves a reference rather
+  # than searching for one. ListVolumes and ControllerGetVolume name no Secret,
+  # and are served only with controller.inventory.enabled, which reads this
+  # driver's StorageClasses, PersistentVolumes and their provisioner Secrets
+  # through this ClusterRole -- again no extra rule.
+  #
+  # Cluster-wide only on request (rbac.clusterWideSecrets): six containers
+  # share this ServiceAccount, and a compromise of any one could read any
+  # Secret it could name. By default the controller may read exactly
+  # the Secrets this release's classes name, through the namespaced Roles at
+  # the end of this file.
+  {{- if .Values.rbac.clusterWideSecrets }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  {{- end }}
+  {{- if .Values.sidecars.capacity.enabled }}
+  # csi-provisioner --enable-capacity creates, updates and deletes one of these
+  # per StorageClass. Only granted when capacity reporting is on, so a release
+  # that does not use it carries no write access to a cluster-wide resource.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csistoragecapacities"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The pod -> ReplicaSet walk --capacity-ownerref-level=2 makes is granted in
+  # the namespaced -controller-self Role below: it only ever reads this pod.
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims/status"]
+    verbs: ["patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  # csi-provisioner v6 and csi-resizer v2 turn their VolumeAttributesClass
+  # gate on by themselves whenever the cluster serves storage.k8s.io/v1
+  # VolumeAttributesClass -- every cluster this chart installs on (1.35+).
+  # The provisioner then reads the class a claim names, through an informer;
+  # without list/watch here that informer is refused and retried for ever.
+  # Upstream's RBAC for both sidecars carries this rule. Read-only, and it
+  # adds no behaviour: the driver advertises no MODIFY_VOLUME, so the
+  # resizer starts no modify controller and no ControllerModifyVolume is sent.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattributesclasses"]
+    verbs: ["get", "list", "watch"]
+  # What client-go's event recorder uses; nothing reads one by name.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get", "list", "watch"]
+  # No cluster-wide pods access. Nothing in this pod lists or watches
+  # pods: csi-resizer's pod informer runs only with handle-volume-inuse-error,
+  # which the chart turns off; csi-snapshotter reads none; and the two
+  # sidecars that read a pod read their own, through the -controller-self
+  # Role below. A cluster-wide list/watch here let the controller read every
+  # pod spec in the cluster, environment variables included.
+{{- if .Values.sidecars.csiAddons.enabled }}
+  # csi-addons sidecar only. Opt-in. Its CSIAddonsNode and its own-pod
+  # reads are namespaced and granted in -controller-self below; what stays
+  # here is cluster-scoped by nature. The VolumeReplication objects are the
+  # csi-addons controller's to watch, not this pod's -- Rule 4 in ARCHITECTURE.md is
+  # unchanged.
+  #
+  # The csi-addons controller authenticates itself to this sidecar with a
+  # service-account token, and the sidecar verifies it through a TokenReview
+  # (and checks it through a SubjectAccessReview). Measured on the lab cluster
+  # with controller and sidecar v0.15.0, 2026-09-14: without these two verbs
+  # every connection fails "failed to review token ... cannot create resource
+  # tokenreviews", the controller deletes the CSIAddonsNode after three
+  # attempts, the sidecar recreates it, and no VolumeReplication is ever
+  # served. Both are cluster-scoped, non-namespaced resources.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+{{- end }}
+{{- if .Values.sidecars.snapshotter.enabled }}
+  # csi-snapshotter only. The CRDs themselves are installed cluster-wide by an
+  # administrator; these verbs let the sidecar read the class a snapshot names
+  # and report status back onto its content object.
+  # csi-provisioner resolves a PVC's dataSource to a snapshot handle before it
+  # ever calls CreateVolume, so restore needs these two on the *provisioner*.
+  # The snapshotter's own verbs below do not cover them: without this a restore
+  # fails with "volumesnapshots ... is forbidden" and never reaches the driver.
+  # watch and update are for csi-provisioner v6.2+'s source-protection
+  # finalizer: it holds a VolumeSnapshot a restore is copying from until the
+  # claim is provisioned, so the snapshot cannot be deleted half way through
+  # a restore -- which here can span several CreateVolume retries -- and it
+  # sweeps finalizers a crash left behind. Upstream calls them optional; the
+  # provisioner runs without them, unprotected.
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotcontents"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotcontents/status"]
+    verbs: ["update", "patch"]
+{{- end }}
+{{- if or .Values.sidecars.capacity.enabled .Values.sidecars.csiAddons.enabled }}
+---
+# What the controller's sidecars read about their own pod, in their own
+# namespace. Namespaced rather than on the ClusterRole: each of these
+# reads names this pod, its ReplicaSet or its Deployment, never anything
+# elsewhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-controller-self
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+rules:
+  # csi-provisioner --capacity-ownerref-level=2 walks pod -> ReplicaSet ->
+  # Deployment to find the owner to stamp on its CSIStorageCapacity objects.
+  # The csi-addons sidecar reads its own pod (--pod/--namespace) and walks the
+  # same chain to own the CSIAddonsNode it registers.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"{{ if .Values.sidecars.csiAddons.enabled }}, "deployments"{{ end }}]
+    verbs: ["get"]
+  {{- if .Values.sidecars.csiAddons.enabled }}
+  # The CSIAddonsNode that tells the csi-addons controller where to send
+  # replication RPCs. Opt-in. Created in the pod's own namespace.
+  - apiGroups: ["csiaddons.openshift.io"]
+    resources: ["csiaddonsnodes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+{{- end }}
+{{- if or .Values.controller.leaderElection .Values.sidecars.csiAddons.enabled }}
+---
+# Leader election is namespace-scoped: the Leases live alongside the
+# Deployment, so this is a Role rather than a ClusterRole. Rendered with
+# csi-addons on even when controller.leaderElection is off: that sidecar runs
+# its own election whenever the driver serves the controller, and without
+# Lease rights it got 403 every 5 s and no VolumeReplication was served.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "watch", "list", "delete", "update", "create"]
+{{- end }}
+{{- if not .Values.rbac.clusterWideSecrets }}
+{{- /*
+Read access to exactly the Secrets this release names -- every class's
+token Secret, plus rbac.extraSecrets (deletion Secrets named by static PVs or
+imported snapshots) -- one Role per namespace, limited by resourceNames.
+*/ -}}
+{{- range $ns, $names := (include "qumulo-csi-driver.secretNamespaces" . | fromJson) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-controller-secrets
+  namespace: {{ $ns }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      {{- range $name := sortAlpha $names }}
+      - {{ $name | quote }}
+      {{- end }}
+{{- end }}
+{{- end }}

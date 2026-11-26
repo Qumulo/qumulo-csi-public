@@ -218,6 +218,26 @@ rollout from counting a pod before the kubelet has registered the plugin.
 Running pods keep their mounts throughout — the mount belongs to the node's
 kernel, not to the node pod.
 
+### Downgrades
+
+**Downgrading OpenShift is not supported**, by Red Hat or by this driver.
+Red Hat does not support rolling a cluster back to an earlier OpenShift
+version; for an update that fails, its guidance is to contact Red Hat support.
+The driver is validated only on the versions in
+[Supported versions](../get-started/openshift.md#supported-versions).
+
+To go back to an earlier **driver** release, roll the Helm release back
+instead:
+
+```bash
+helm history qumulo-csi -n qumulo-csi
+helm rollback qumulo-csi <revision> -n qumulo-csi
+```
+
+A rollback changes only the driver's pods and objects. Volumes, their data and
+running workloads are not affected, and pods keep their mounts. A rollback
+cannot repair an upgrade that failed part-way; see the next section.
+
 ### If an upgrade fails part-way
 
 An upgrade that fails mid-flight — for example one run by mistake with
@@ -415,7 +435,9 @@ serving.
 
 **A release stuck in `pending-install` or `pending-upgrade`** (Helm was
 stopped part-way, or could not write its final status) refuses every new
-command with `another operation (install/upgrade/rollback) is in progress`.
+command: `helm upgrade` with `another operation (install/upgrade/rollback) is
+in progress`, and `helm install` of the same name with `cannot reuse a name
+that is still in use`.
 
 - `pending-install`: nothing depends on it yet. Run `helm uninstall`
   and install again. A first install has made no volumes, so this loses
@@ -426,6 +448,11 @@ command with `another operation (install/upgrade/rollback) is in progress`.
 Each of these writes Helm's release record. Where Helm's release Secrets are
 blocked for the install identity, the platform team runs it, or the release
 moves to ConfigMap storage first (above).
+
+Tested on OpenShift 4.22 with Helm 3.21.4 and Helm 4.3.1, on Secret and
+ConfigMap storage: the move to ConfigMaps above, upgrade and rollback on
+ConfigMaps, both stuck states, and the Helm 4 `--force-replace
+--server-side=false` repair below.
 
 ## Proxy and CA failures
 
@@ -452,7 +479,8 @@ driver's own API calls never go through the proxy.
 | Symptom | Likely cause |
 |---|---|
 | Claims Pending, `dial tcp … i/o timeout` to the array | No proxy set on a cluster that requires one. |
-| Claims Pending, proxy returns `403` or `502` | The array is not permitted by the proxy; add it to `noProxy` if it is reachable directly. |
+| Claim fails with `InvalidArgument` … `HTTPS proxy … refused to connect to … (403 Forbidden)` | The proxy does not permit the array (or the host does not exist). Allow it on the proxy, or add it to `noProxy` if it is reachable directly. A `407` means the proxy wants credentials. |
+| Claims Pending, proxy returns `502`, `503` or `504` | The proxy cannot reach the array right now; the driver keeps retrying. |
 | Sidecar errors talking to the Kubernetes API | A `noProxy` that was overwritten rather than extended — the chart adds the cluster entries itself, so list only arrays here. |
 
 ### The trusted CA bundle has not been injected
@@ -519,8 +547,8 @@ The node plugin binds two **host** ports on every worker: `node.healthPort`
 which the chart's does. A second release of this chart on the same cluster
 needs its own `node.healthPort` and `metrics.port.node`; its registrar port
 follows. The install or upgrade is refused, naming the DaemonSet, if another
-DaemonSet already holds one of them. A second release whose upgrade to the
-4d386b0 chart already failed on the port must be rolled back
+DaemonSet already holds one of them. A second release whose upgrade to a
+chart with this check already failed on the port must be rolled back
 (`helm rollback <release> <last good revision>`) before the next upgrade;
 upgrading straight over it is refused with `Duplicate value: "registrar"`. If you also run the upstream
 `csi-driver-nfs`, which uses 29653, change one of them.

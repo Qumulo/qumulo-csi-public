@@ -1,0 +1,24 @@
+# The install namespace, with the labels OpenShift admission needs.
+#
+# Apply this before `helm install`. The SCC bindings in README.md are not
+# enough on their own: OpenShift runs Pod Security Admission alongside SCC, and
+# a namespace at the default level refuses the node DaemonSet even with the
+# privileged SCC bound to its ServiceAccount.
+#
+# The suite derives the required level from the rendered node pod rather than
+# trusting these labels, and fails if the two disagree.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qumulo-csi
+  labels:
+    # The node DaemonSet is hostNetwork + hostPath + privileged. There is no
+    # weaker level that admits it.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+  annotations:
+    # Without this, the SCC-to-PSA label syncer overwrites the labels above
+    # from the SCCs it finds bound, and the DaemonSet starts being refused some
+    # minutes after a working install.
+    security.openshift.io/scc.podSecurityLabelSync: "false"

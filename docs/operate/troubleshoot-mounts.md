@@ -38,14 +38,15 @@ kubectl get csinodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.
 
 Every line must show `csi.qumulo.com`.
 
-**Root cause, most common by a wide margin:** a non-default `kubeletDir` —
-k3s and microk8s in particular.
+**Root cause, most common by a wide margin:** a non-default `kubeletDir`.
+The default, `/var/lib/kubelet`, is right on most distributions, k3s included.
+MicroK8s is the exception.
 
 **Resolution.**
 
 ```yaml
 node:
-  kubeletDir: /var/lib/rancher/k3s/agent/kubelet
+  kubeletDir: /var/snap/microk8s/common/var/lib/kubelet   # MicroK8s
 ```
 
 !!! note "An empty `csinodes` entry means that node cannot mount"

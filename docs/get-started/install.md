@@ -1,8 +1,8 @@
 # Install the driver
 
-The supported installation path. You need access to the published chart and
-its two images, all on the GitHub Container Registry; you do not need to clone
-this repository, build anything or install a Go toolchain.
+The supported installation path. The chart and its two images are published on
+the GitHub Container Registry; you do not need to clone this repository, build
+anything or install a Go toolchain.
 
 Before starting, work through [Prerequisites](prerequisites.md).
 
@@ -14,7 +14,7 @@ Before starting, work through [Prerequisites](prerequisites.md).
 
 Work through the steps below in order. Lines you must edit are marked
 **`# <-- EDIT`**, and anything in angle brackets — `<github-user>`,
-`<commit>`, `<api-token>` — is a value you replace, brackets included.
+`<api-token>` — is a value you replace, brackets included.
 
 ## 1. Create the namespace
 
@@ -25,54 +25,25 @@ Skip this if you already created it along with the token Secret in
 kubectl create namespace qumulo-csi
 ```
 
-## 2. Get access to the images
+## 2. The published chart and images
 
 Each release publishes a chart and two images to the GitHub Container Registry.
-All three carry the build they came from, `<commit>` below. Qumulo gives you
-that version with the release; if you do not have it, ask through
+All three are named after the release — `0.1.2` — and nothing else. Qumulo
+gives you that version with the release; if you do not have it, ask through
 [care.qumulo.com](https://care.qumulo.com).
 
 | What | Where | Version |
 |---|---|---|
-| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` | `0.1.0+<commit>` |
-| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.0-<commit>` |
-| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.0-<commit>` |
+| Chart | `oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver` | `0.1.2` |
+| Controller image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller` | `0.1.2` |
+| Node image | `ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node` | `0.1.2` |
 
-The chart pulls the images of its own build, so you never set an image tag.
-All three are visible to members of the Qumulo GitHub organization only, so
-every node pulls with a credential.
+All three are public: there is no registry login, no pull secret and no
+mirroring step. The chart carries those image repositories as its defaults and
+pulls the images of its own release, so you set neither a repository nor a tag.
 
-- **Create a GitHub token.** A *classic* personal access token with only the
-  **`read:packages`** scope. Then use **Configure SSO** on that token and
-  authorize it for the `Qumulo` organization — an unauthorized token is
-  refused with 403 even though its scope is right.
-
-- **Save it** without it reaching the screen or shell history:
-
-    ```bash
-    read -rsp 'GitHub token: ' T && printf '%s' "$T" > ~/.ghcr-pat && chmod 600 ~/.ghcr-pat && unset T
-    ```
-
-- **Create the pull secret** in the release namespace:
-
-    ```bash
-    kubectl -n qumulo-csi create secret docker-registry ghcr-pull \
-      --docker-server=ghcr.io \
-      --docker-username=<github-user> \
-      --docker-password="$(cat ~/.ghcr-pat)"
-    ```
-
-- **Log Helm in**, so it can fetch the chart with the same token:
-
-    ```bash
-    cat ~/.ghcr-pat | helm registry login ghcr.io -u <github-user> --password-stdin   # <-- EDIT
-    ```
-
-Once the pods are running, `rm ~/.ghcr-pat`.
-
-!!! note "The token keeps the driver installable, not running"
-    Pods already started are unaffected when it expires, but a restarted or
-    newly scheduled pod can no longer pull. Note its expiry.
+Two machines need to reach `ghcr.io`: the one running `helm`, which pulls the
+chart, and every worker node, which pulls the images.
 
 For a private registry or a disconnected cluster, see
 [Install in an air-gapped environment](air-gapped.md).
@@ -80,26 +51,21 @@ For a private registry or a disconnected cluster, see
 ## 3. Write your values file
 
 This is the only file you author; everything else has a working default. At
-install time it holds nothing but the pull secret and a couple of driver
-settings — **no Qumulo cluster address, no token and no StorageClass**, which
-all come later, when you
-[create your first volume](first-volume.md).
+install time it holds a couple of driver settings and nothing more — **no
+Qumulo cluster address, no token and no StorageClass**, which all come later,
+when you [create your first volume](first-volume.md).
 
 ```yaml
-# qumulo-values.yaml
-image:
-  # The chart already pulls ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-{controller,node}
-  # at the chart's version. Set repository only for your own registry.
-  pullSecrets:
-    - name: ghcr-pull
-
+# values.yaml
 qumulo:
   # No cluster address or token here: both are set per StorageClass, because
   # one installation serves many Qumulo clusters.
   insecureSkipTlsVerify: false
 
+# The chart's default kubelet directory is /var/lib/kubelet, which is correct
+# on most distributions, k3s included. MicroK8s is the exception:
 # node:
-#   kubeletDir: /var/lib/rancher/k3s/agent/kubelet    # k3s / microk8s ONLY
+#   kubeletDir: /var/snap/microk8s/common/var/lib/kubelet   # MicroK8s only
 ```
 
 Every value: [Chart values](../reference/chart-values.md).
@@ -139,17 +105,17 @@ images it was built with.
 ```bash
 # <-- EDIT: --version is the one from step 2
 helm install qumulo-csi oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> \
+  --version 0.1.2 \
   --namespace qumulo-csi \
-  --values qumulo-values.yaml
+  --values values.yaml
 ```
 
-Always pass `--version`: every 0.1.0 build carries the same release number, so
-Helm cannot tell which is newest on its own.
+Always pass `--version`, so the release you install is the one you chose rather
+than whichever is newest at the time.
 
-!!! warning "Do not install from the `charts/` folder of a checkout"
-    That chart is for development. It is always version `0.1.0` whatever was
-    built, and asks for the moving `0.1.0` image tag rather than one build, so
-    `helm history` cannot tell builds apart and the image can come from a
-    different commit than the chart. Install a released chart from the registry
-    instead, as shown above.
+!!! warning "Install the published chart, not the `charts/` folder of a checkout"
+    If you have a clone of the source, `charts/qumulo-csi-driver` is the
+    development chart. It follows the branch you checked out, which can be
+    ahead of or behind any release, so what it installs is not a release and
+    `helm history` cannot tell one checkout from another. The published chart
+    in the table above is the released artifact, and `--version` names it.

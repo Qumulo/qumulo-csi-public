@@ -1,0 +1,15 @@
+# Images the chart deploys that `make chart-image-scan` scans but does not
+# fail on, each with the date its exception ends and why it exists.
+#
+#   <image>:<tag>   <expires YYYY-MM-DD>   <reason>
+#
+# An excepted image is still scanned and its findings are still printed; only
+# the exit code is spared. Past its date an exception fails the scan itself,
+# so a held image is looked at again rather than forgotten: bump the image, or
+# renew the date with a reason that is still true. Match is on the image and
+# tag the chart pins (the digest is ignored), so bumping the tag ends the
+# exception without editing this file.
+
+# external-health-monitor-controller: v0.19.0 is the latest upstream release
+# (2026-11-23), so there is nothing to bump to. Off by default.
+registry.k8s.io/sig-storage/csi-external-health-monitor-controller:v0.19.0   2027-01-31   latest upstream; off by default

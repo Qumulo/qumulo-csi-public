@@ -64,7 +64,9 @@ backoff before accepting that it is gone, so a network blip cannot quietly
 turn a planned failover into a forced one. Forced, it promotes at the last
 retained recovery point.
 
-Then repoint the claims and restart the pods:
+Then repoint the claims and restart the pods with `qumulo-csi-repoint`
+(**Preview**: not shipped in a release image, so it runs from a source
+checkout):
 
 ```bash
 go run ./cmd/qumulo-csi-repoint failover -namespace apps          # plans only

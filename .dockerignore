@@ -1,0 +1,27 @@
+# Keep the build context small: everything the image needs is go.mod, go.sum,
+# cmd/ and pkg/. Note Docker ignores .gitignore, so bin/ must be listed here
+# even though git already excludes it.
+.git
+.gitignore
+.dockerignore
+.DS_Store
+
+# Prebuilt host binaries -- the image builds its own.
+bin/
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Local tooling / docs that do not affect the build
+Dockerfile
+Makefile
+README.md
+.env
+.idea/
+.vscode/
+go.work
+go.work.sum

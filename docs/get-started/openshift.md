@@ -22,15 +22,19 @@ proxy and CA failures, monitoring and uninstall — see
 | Node operating system | RHCOS 9.8 |
 | NFS | 4.1 and 3 |
 | Architectures | `x86_64`, `aarch64` |
-| Driver | 0.1.0 |
+| Driver | 0.1.2 |
 
 !!! warning "OpenShift 4.21 and older are not supported"
     The chart enforces `kubeVersion: ">=1.35.0-0"`, and OpenShift 4.21 ships
     Kubernetes 1.34. `helm install` refuses the chart rather than installing
     something that cannot work.
 
-Validated on 28 October 2026 against OpenShift 4.22 with SELinux enforcing,
-on both NFS 4.1 and NFS 3.
+Tested on OpenShift 4.22 with SELinux enforcing, on both NFS 4.1 and NFS 3.
+
+!!! note "Downgrades"
+    Downgrading OpenShift is not supported, by Red Hat or by this driver. To go
+    back to an earlier driver release, use `helm rollback`; see
+    [Downgrades](../operate/openshift-operations.md#downgrades).
 
 ## What the chart does on OpenShift
 
@@ -67,12 +71,11 @@ pull secret and no mirroring step. What the cluster needs:
 oc new-project qumulo-csi
 
 helm install qumulo-csi \
-  oci://<public-registry>/<org>/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> -n qumulo-csi -f values.yaml
+  oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
+  --version 0.1.2 -n qumulo-csi -f values.yaml
 ```
 
-Qumulo support gives you the registry and the exact `--version` for your
-release.
+Qumulo gives you the exact `--version` for your release.
 
 The chart published to the public registry carries the public image
 repositories as its defaults, so nothing in `values.yaml` points at images:
@@ -81,17 +84,20 @@ leave `image.controller.repository`, `image.node.repository` and
 it:
 
 ```bash
-helm show values oci://<public-registry>/<org>/charts/qumulo-csi-driver \
-  --version 0.1.0+<commit> | grep -A2 'repository:'
+helm show values oci://ghcr.io/qumulo/qumulo-csi-public/charts/qumulo-csi-driver \
+  --version 0.1.2 | grep -A2 'repository:'
 ```
 
 That is all there is to it. There is no SCC step: the chart creates the node
 plugin's SCC and grants it to the node service account.
 
 !!! note "Rendering offline for GitOps"
-    `helm template`, Argo CD and any other render that cannot see the cluster
-    does not detect OpenShift, so the SCC is silently left out. Set
-    `openshift.enabled: true` in `values.yaml` for those.
+    Plain `helm template` has no cluster to ask, so `openshift.enabled: auto`
+    finds no `SecurityContextConstraints` and the SCC is silently left out.
+    Set `openshift.enabled: true` in `values.yaml` for any render that cannot
+    see the cluster. Argo CD passes the destination cluster's API versions to
+    Helm, so detection can work there — set `openshift.enabled: true` anyway
+    rather than depend on it.
 
 ## Check the install
 
@@ -110,17 +116,19 @@ Then run the chart's tests:
 helm test qumulo-csi -n qumulo-csi
 ```
 
-The readiness test always runs: it checks that the controller is Available,
-every node pod is Ready and the driver is registered on the nodes, using
-Red Hat's `ose-cli` image under the controller's SCC (`restricted-v2` unless
-you set `openshift.controllerSCC`). To also prove a volume works end to end,
-set `tests.storageClass` to a class first: a pod under the same SCC then
-writes a file to a 1 GiB volume on it and reads it back. That pod runs only
-on nodes the node plugin runs on (it takes `node.nodeSelector`,
-`node.tolerations` and `node.affinity`). The class must
-let a non-root user write (`mountPermissions: "0777"`, the default). A pass
-deletes the test pods, so leave out `--logs` (Helm would find no log and exit
-1). A failure keeps the pod: `oc -n qumulo-csi logs <pod>` shows why.
+**The readiness test always runs.** It checks that the controller is
+Available, that every node pod is Ready and that the driver is registered on
+the nodes. It runs from the controller image (`qumulo-csi-driver ready-check`)
+under the controller's SCC — `restricted-v2`, unless you set
+`openshift.controllerSCC`.
+
+**To prove a volume works end to end**, set `tests.storageClass` to a class
+first. A pod under the same SCC then writes a file to a 1 GiB volume on that
+class and reads it back. The class must let a non-root user write
+(`mountPermissions: "0777"`, the default).
+
+**Where the volume test runs.** Only on nodes the node plugin runs on; it
+takes `node.nodeSelector`, `node.tolerations` and `node.affinity`.
 
 !!! note "Node pods may be refused for a few seconds"
     On a fresh project the DaemonSet can be created before the SCC and its
@@ -132,7 +140,8 @@ deletes the test pods, so leave out `--logs` (Helm would find no log and exit
 Some clusters do not let workloads use `restricted-v2`, do not let a workload
 chart create SCCs, or use a policy engine such as Gatekeeper so that only a
 platform team may create RoleBindings, ClusterRoleBindings or Helm's release
-Secrets. The chart supports all of these:
+Secrets. The chart supports all of these. A full example is in
+`test/openshift/values/openshift-values-gatekeeper.yaml`:
 
 ```yaml
 openshift:
@@ -147,14 +156,12 @@ openshift:
     name: qumulo-csi-node
 rbac:
   createBindings: false      # your platform team applies every binding
-# Optional: your own node label, if you pin the driver to certain nodes.
-# The chart defines no labels of its own; both default to {}.
 node:
   nodeSelector:
-    example-storage: "true"   # quoted: a node selector value is a string
+    hydra_storage: "true"    # quoted: a node selector value is a string
 controller:
   nodeSelector:
-    example-storage: "true"
+    hydra_storage: "true"
 ```
 
 Before the install, the platform team:
@@ -171,7 +178,7 @@ The install stops before it changes anything, naming each binding that is
 missing or wrong.
 
 !!! warning "Use a values file or `--set-string` for node selectors"
-    `--set node.nodeSelector.example-storage=true` makes the value a boolean,
+    `--set node.nodeSelector.hydra_storage=true` makes the value a boolean,
     which the API server refuses. Quote it in a values file, as above, or use
     `--set-string`.
 
@@ -194,6 +201,59 @@ that holds the port, if another DaemonSet already uses one of these ports.
 29653 is also the upstream `csi-driver-nfs` node health port — a cluster
 running both needs a different number there. The chart's node SCC allows host ports; an SCC supplied
 by your cluster admin must do the same.
+
+## Arrays reachable only from the nodes
+
+By default the controller reaches the Qumulo REST API over the pod network.
+Some clusters route the storage network only from the nodes themselves, so a
+pod on the pod network has no path to the array. A node selector alone does
+not change that: the pod still uses the pod network. Run the controller on
+the node's network instead:
+
+```yaml
+controller:
+  hostNetwork: true
+  nodeSelector:
+    hydra_storage: "true"    # only nodes with a route to the array
+```
+
+What the chart then does:
+
+| | |
+|---|---|
+| Network | `hostNetwork: true` and `dnsPolicy: ClusterFirstWithHostNet`, so the sidecars still find the Kubernetes API |
+| SCC | `hostnetwork-v2`, OpenShift's own SCC for host networking: no privilege, no hostPath, all capabilities dropped, a uid from the namespace's range. The fixed uid is left out |
+| Grant | a RoleBinding `<release>-qumulo-csi-driver-controller-scc` to `system:openshift:scc:hostnetwork-v2`, for the controller service account only. The node plugin's privileged SCC is not shared |
+| Placement | the replicas are kept on different nodes (required anti-affinity between host-network replicas only), so you need as many matching nodes as `controller.replicaCount` (2). Turning `hostNetwork` off again is an ordinary rollout |
+| Rollout | one replica at a time (`maxSurge: 0`); the other keeps the leases |
+| `helm test` | the test pods stay on `restricted-v2`; they never use the host network |
+
+**Ports on the node.** Every port the controller listens on becomes a port on
+its node: 29652 (`/healthz`), `metrics.port.provisioner` (29656),
+`metrics.port.resizer` (29657), `metrics.port.snapshotter` (29658), and with
+them `sidecars.csiAddons.controllerPort` (9070) and `metrics.port.controller`
+(29654). They must be free on the selected nodes; the install is refused,
+naming the DaemonSet, if another DaemonSet already holds one. They differ from
+the node plugin's ports, so both can run on one node. A `NetworkPolicy` does
+not cover host-network ports.
+
+**Your own SCC.** Name it and the ClusterRole that grants it:
+
+```yaml
+openshift:
+  controllerSCC: hostnet-csi            # must allow host networking
+  assignControllerUID: true             # if it assigns a uid from the range
+  controllerSCCRole: use-hostnet-csi    # grants "use" on that SCC
+```
+
+A `restricted*` SCC refuses host networking, so `controller.hostNetwork` with
+one is refused at install. With `rbac.createBindings: false` the platform team
+applies the controller's grant with the other bindings; it is listed with
+them.
+
+**Verify TLS.** Give the controller the array's CA (`qumulo.caBundle`, or
+`openshift.trustedCABundle: true` when the CA is in the cluster's bundle)
+rather than `insecureSkipTlsVerify`.
 
 ## Clusters behind a proxy
 
@@ -221,10 +281,7 @@ already trusts (its Proxy `trustedCA`), set `openshift.trustedCABundle: true`.
 OpenShift fills a ConfigMap the chart creates, and the controller uses it. This
 replaces `qumulo.caBundle`; do not set both.
 
-## Upgrade from a release made before OpenShift support
-
-`helm upgrade --reuse-values` works. The node pods of the old release never
-started on OpenShift; after the upgrade they start without any SCC step.
+## If an upgrade fails part-way
 
 An upgrade that fails part-way needs `--force` to repair
 (`--force-replace --server-side=false` for a release Helm 4 installed), or a
@@ -241,8 +298,7 @@ Secret's name and namespace in the class.
 
 ## What application pods need
 
-Tested on 28 Oct 2026 with NFS 4.1 and NFS 3, one claim per case, on
-OpenShift 4.22 with SELinux enforcing.
+Tested on OpenShift 4.22 with SELinux enforcing, on NFS 4.1 and NFS 3.
 
 **No special settings for most apps.** A pod under OpenShift's default SCC,
 `restricted-v2`, runs with a random user ID and group 0. It can read and write
@@ -256,7 +312,7 @@ labels can share one volume.
 | `mountPermissions` | `restricted-v2` (random user ID) | `nonroot-v2` (fixed non-root user) | `anyuid` or `privileged` (root) |
 |---|---|---|---|
 | `0777` (default) | read and write | read and write | read and write |
-| `0770` | read and write (group 0) | read and write (group 0) | read and write |
+| `0770` | read and write (group 0) | read and write, if the image's primary group is 0 | read and write |
 | `0750` | read only | read only | read and write |
 
 The driver sets `fsGroupPolicy: None`, so Kubernetes never changes file
@@ -266,9 +322,9 @@ export squashes root.
 
 **User-namespace pods cannot use NFS volumes.** A pod with `hostUsers: false`
 (for example under `restricted-v3`) fails to start:
-`mount_setattr ... doesn't support idmap mounts on this kernel`. The RHCOS 9.8
-kernel cannot ID-map NFS mounts. This is a platform limit for every NFS volume,
-not only Qumulo's. Run such apps with `hostUsers` unset.
+`mount_setattr ... doesn't support idmap mounts on this kernel`. Linux NFS
+does not support ID-mapped mounts, on any distribution — this is not specific
+to RHCOS, to OpenShift or to Qumulo. Run such apps with `hostUsers` unset.
 
 **Read-only volumes.** Set `readOnly: true` on the pod's volume or
 `volumeMounts`. A class that only adds `ro` to `mountOptions` is refused on

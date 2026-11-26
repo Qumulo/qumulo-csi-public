@@ -1,0 +1,20 @@
+# Restores into a NEW PVC -- a restore never lands on top of the volume it
+# came from. Point your workload at app-data-restored, then delete the old
+# app-data PVC once you're happy.
+#
+# `storage` must be at least the size of the snapshotted volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data-restored
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: qumulo-nfs41
+  resources:
+    requests:
+      storage: 100Gi
+  dataSource:
+    name: before-upgrade
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io

@@ -53,17 +53,17 @@ kubectl -n qumulo-csi describe pod <pod-name> | grep -A3 -E 'Failed|BackOff'
 
 | Message contains | Cause |
 |---|---|
-| `failed to fetch anonymous token` … `401 Unauthorized` | no credential reached the registry: `image.pullSecrets` is unset, or the Secret it names is missing from the release namespace |
-| `failed to fetch oauth token` … `403 Forbidden` | the token is wrong or expired, lacks `read:packages`, is not SSO-authorized for the Qumulo organization, or its owner is not a member |
-| `not found` | a wrong `repository` or `tag`; a packaged chart asks for `<version>-<commit>`, which exists only for a build `make release` published — one packaged by hand with `make chart-package` may name a build that was never pushed |
+| `401 Unauthorized` or `403 Forbidden` | the registry refused the pull. The published images are public, so this means the install points at a private registry or mirror: either `image.pullSecrets` is unset, or the Secret it names is missing from the release namespace or holds the wrong credential |
+| `not found` | a wrong `repository` or `tag`, or a `--version` that names no published release. Check both against [Install the driver](../get-started/install.md) |
 | `no match for platform in manifest` | an image copied with `docker pull` + `docker push`, which keeps one platform |
 
 **Resolution.**
 
 ```bash
+# only when pulling from a private registry or mirror:
 # is the Secret the one the pods name, in the same namespace?
 kubectl -n qumulo-csi get deploy,ds -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.imagePullSecrets}{"\n"}{end}'
-kubectl -n qumulo-csi get secret ghcr-pull -o jsonpath='{.type}{"\n"}'
+kubectl -n qumulo-csi get secret <pull-secret> -o jsonpath='{.type}{"\n"}'
 #    -> kubernetes.io/dockerconfigjson
 ```
 
@@ -241,43 +241,28 @@ stops there and the retry adopts whatever it left.
 
 ## A PVC stuck at `already exists`
 
-**Problem.** A directory already exists at the volume's path and this driver
-will not adopt it.
-
-!!! note "An interrupted create is no longer this problem"
-    A `CreateVolume` cut between making the directory and setting its quota
-    **is** resumed. The retry recognises the empty, quota-less directory as
-    its own interrupted attempt and finishes it — same directory, quota and
-    export — wherever the create was cut. If you are looking this up because
-    a controller restarted mid-provision, no manual repair is needed: let the
-    provisioner retry.
+**Problem.** A directory already sits at the volume's path, holds files, and
+has no quota, so it was not made by this driver.
 
 **Symptoms.** The PVC stays `Pending`, failing `already exists` on every
 retry.
 
-**Root cause.** There is a directory at the volume's path that **holds
-data**. The driver tells its own interrupted create (empty, no quota) from a
-directory with contents, and refuses the second kind: putting a quota on
-somebody else's files, and later deleting them with the PV, would be worse
-than failing. This is a name collision, not a provisioning defect.
+**Root cause.** A create interrupted between making the directory and setting
+its quota is no longer a cause: the retry finishes an **empty**,
+quota-less directory at exactly the volume's path, since 0.1.0. A directory
+that holds anything is never adopted, because adopting an arbitrary directory
+with someone's data in it would be worse.
 
-**Resolution.** Decide whose directory it is.
+**Resolution.** Find out who put the directory there. On the array, move it
+away (named `pvc-<uid>`, matching the PVC's UID); the next retry provisions
+normally.
 
 ```bash
 kubectl get pvc <claim-name> -o jsonpath='{.metadata.uid}{"\n"}'
-# look for pvc-<uid> under basePath on the cluster, and list its contents
+# look for pvc-<uid> under basePath on the cluster
 ```
 
-- **It holds data you want:** give the claim a different volume name, or move
-  the data aside, then recreate the PVC. To hand the existing data to
-  Kubernetes deliberately, use
-  [Adopt an existing folder](../features/existing-folder.md) rather than
-  letting a dynamic create take it.
-- **It is leftover junk you are sure of:** remove it on the array and let the
-  provisioner retry.
-
-**Prevention.** Keep `basePath` for this driver's own volumes, so a dynamic
-create never lands on a path that already has contents.
+**Prevention.** Do not create directories under a class's `basePath` by hand.
 
 ---
 

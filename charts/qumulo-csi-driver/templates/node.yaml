@@ -1,0 +1,344 @@
+{{- $fullname := include "qumulo-csi-driver.fullname" . -}}
+{{- $pluginDir := include "qumulo-csi-driver.pluginDir" . -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $fullname }}-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+  # As on the controller: the driver's liveness probe reads the liveness-probe
+  # sidecar's /healthz on node.healthPort, declared on that sidecar; a second
+  # declaration on the driver is a duplicate-port warning on every install.
+  annotations:
+    ignore-check.kube-linter.io/liveness-port: "the driver probes the /healthz of the liveness-probe sidecar on node.healthPort, declared on that sidecar in the same pod"
+spec:
+  # A node pod counts as available only once it has been Ready this long, and
+  # Ready means the kubelet registered the plugin: the driver's readiness probe
+  # passes only after the kubelet's first NodeGetInfo. Without both, a build
+  # that started but never registered (a wrong kubeletDir) rolled across every
+  # node, and every node lost mount and unmount for every array.
+  minReadySeconds: {{ .Values.node.minReadySeconds | default 10 }}
+  {{- with .Values.node.updateStrategy }}
+  updateStrategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "qumulo-csi-driver.nodeSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qumulo-csi-driver.labels" . | nindent 8 }}
+        app.kubernetes.io/component: node
+      {{- $ocp := include "qumulo-csi-driver.isOpenShift" . }}
+      {{- if or .Values.node.podAnnotations $ocp }}
+      annotations:
+        {{- if $ocp }}
+        # The chart's own SCC (openshift-scc.yaml), or the admin's with
+        # openshift.nodeSCC.create=false.
+        openshift.io/required-scc: {{ include "qumulo-csi-driver.nodeSCCName" . | quote }}
+        {{- end }}
+        {{- with .Values.node.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $fullname }}-node
+      # The node service never calls the Kubernetes API (every client the
+      # driver builds is controller-only, cmd/qumulo-csi-driver/main.go), and
+      # neither sidecar here does. A token on a privileged pod on every worker
+      # would be an API credential nothing uses.
+      automountServiceAccountToken: false
+      # Explicit rather than inherited. The driver drains in-flight RPCs for
+      # shutdownGracePeriod (10s) and then stops outright, so this only has to
+      # be comfortably larger; stating it keeps the relationship between the
+      # two numbers visible instead of one silently depending on Kubernetes'
+      # 30s default.
+      terminationGracePeriodSeconds: {{ .Values.node.terminationGracePeriodSeconds }}
+      {{- with include "qumulo-csi-driver.nodePriorityClassName" . }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.node.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # The kubelet talks to this plugin over a host path, and the mounts it
+      # creates have to be visible in the host namespace.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $healthPort := include "qumulo-csi-driver.nodeHealthPort" . }}
+      containers:
+        - name: node-driver-registrar
+          image: {{ .Values.sidecars.nodeDriverRegistrar.image }}
+          {{- with .Values.node.registrarSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=/csi/csi.sock
+            # The path as the *kubelet* sees it, not as this container does.
+            - --kubelet-registration-path={{ $pluginDir }}/csi.sock
+            # Its /healthz calls GetInfo on the registrar's own registration
+            # socket. That is this container's health -- a registrar whose
+            # socket is gone is restarted, and recreates it -- and is what the
+            # probes below read. It is NOT the plugin's registration: it stayed
+            # green through a wrong kubeletDir, so the pod's readiness also
+            # needs the driver container's registration marker below.
+            # A host port (hostNetwork), bound to the node's own address only.
+            # No pprof (no --enable-pprof).
+            - --http-endpoint=$(POD_IP):{{ include "qumulo-csi-driver.nodeRegistrarHealthPort" . }}
+            - --v=2
+            {{- with .Values.sidecars.nodeDriverRegistrar.extraArgs }}
+            # Verbatim, after the chart's own.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: registrar
+              containerPort: {{ include "qumulo-csi-driver.nodeRegistrarHealthPort" . }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: registrar
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: registrar
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+          resources:
+            {{- include "qumulo-csi-driver.nodeResources" (dict "root" $ "container" "registrar") | nindent 12 }}
+
+        - name: liveness-probe
+          image: {{ .Values.sidecars.livenessProbe.image }}
+          {{- with .Values.node.livenessProbeSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --csi-address=/csi/csi.sock
+            # A host port, on the node's own address only, not every
+            # interface of the host, the same as the metrics port.
+            - --http-endpoint=$(POD_IP):{{ $healthPort }}
+          ports:
+            - name: healthz
+              containerPort: {{ $healthPort }}
+          # This container's own health: its listener accepts connections. Not
+          # /healthz, which reports the driver's health; the driver container
+          # probes that.
+          livenessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+          resources:
+            {{- include "qumulo-csi-driver.nodeResources" (dict "root" $ "container" "livenessProbe") | nindent 12 }}
+
+        - name: qumulo-csi-driver
+          image: {{ include "qumulo-csi-driver.nodeImage" . }}
+          {{- with .Values.node.driverSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          imagePullPolicy: {{ include "qumulo-csi-driver.pullPolicy" (list .Values.image.node $) }}
+          # No Qumulo credentials here, and none needed: the node service never
+          # calls the REST API. That is what keeps a cluster-wide API token off
+          # every worker.
+          args:
+            - -mode=node
+            - -endpoint=unix:///csi/csi.sock
+            - -drivername={{ .Values.driverName }}
+            - -nodeid=$(NODE_ID)
+            - -log-level={{ .Values.node.logLevel }}
+            # Written on the kubelet's first NodeGetInfo; the readiness probe
+            # below checks it.
+            - -registration-marker=/run/qumulo-csi/registered
+            {{- if .Values.metrics.enabled }}
+            # RPC latency and outcomes for the node service, which
+            # is the half of the driver a stuck mount shows up in. No array
+            # series here: the node service never calls the REST API, and
+            # that is what keeps a cluster-wide API token off every worker.
+            #
+            # This pod is hostNetwork: true, so the port below is a HOST port
+            # on every node in the DaemonSet. It must not collide with
+            # anything else on a worker. Bound to the pod IP -- the node's
+            # own address -- not every interface of the host.
+            - -metrics-address=$(POD_IP):{{ .Values.metrics.port.node }}
+            {{- end }}
+            {{- if .Values.node.kerberos.enabled }}
+            - -kerberos-keytab={{ .Values.node.kerberos.keytabPath }}
+            {{- end }}
+            {{- with .Values.node.unmountTimeout }}
+            # Bounds the plain umount before the forced/lazy escalation. Only
+            # rendered when set, so the driver's own 30s default is the single
+            # source of truth for everybody who has not tuned it.
+            - -unmount-timeout={{ . }}
+            {{- end }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            # hostPort is deliberately not set: hostNetwork already makes
+            # this a host port, and declaring one would add a scheduling
+            # constraint on a DaemonSet that is one-per-node anyway.
+            - name: metrics
+              containerPort: {{ .Values.metrics.port.node }}
+          {{- end }}
+          env:
+            # spec.nodeName, not the container hostname: the node's name is
+            # what the CO matches a volume's topology against.
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- if .Values.metrics.enabled }}
+            # The address the metrics listener binds.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- end }}
+          # Liveness comes from the liveness-probe sidecar, which calls the CSI
+          # Identity.Probe RPC over the shared socket and serves the result on
+          # node.healthPort. That RPC deliberately never contacts the Qumulo cluster
+          # (see IdentityServer.Probe: a probe that did contact the cluster
+          # once reported "Ready" for 36 minutes with a dead token), so this
+          # restarts the container for a wedged driver, not for an
+          # unreachable cluster.
+          #
+          # The port is numeric rather than named because the name is declared
+          # on the sidecar, not here -- and a numeric port is all that is
+          # needed, since containers in a pod share a network namespace. An
+          # earlier note claimed the probe was impossible for that reason; it
+          # is not, and without it the sidecar served /healthz that nothing
+          # ever read.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ $healthPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          # Ready only once the kubelet has registered the plugin. The kubelet
+          # calls NodeGetInfo after it picks up the registrar's socket and
+          # before it writes CSINode; the driver records that call in the
+          # marker. A socket in a directory the kubelet does not watch never
+          # gets that call, so the pod stays NotReady and the rollout stops at
+          # the first node instead of reaching every node.
+          readinessProbe:
+            exec:
+              command:
+                - /qumulo-csi-driver
+                - -check-registration=/run/qumulo-csi/registered
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            # Pod-scoped: kept across a driver-container restart (which
+            # brings no new NodeGetInfo), gone with the pod.
+            - name: registration-state
+              mountPath: /run/qumulo-csi
+            - name: pods-mount-dir
+              mountPath: {{ .Values.node.kubeletDir }}
+              # Bidirectional so a mount made here propagates back to the host
+              # and into the pods that asked for it. Without it the volume
+              # mounts inside this container and nowhere else.
+              mountPropagation: Bidirectional
+            {{- if .Values.node.kerberos.enabled }}
+            # Approach 1, machine-account granularity: the node authenticates as
+            # the host it runs on, using the keytab that host already has from
+            # its domain join. The driver never handles a credential -- it
+            # cannot leak one it never sees, and there is no per-tenant keytab
+            # to distribute or rotate.
+            - name: krb5-keytab
+              mountPath: {{ .Values.node.kerberos.keytabPath }}
+              readOnly: true
+            - name: krb5-conf
+              mountPath: /etc/krb5.conf
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- include "qumulo-csi-driver.nodeResources" (dict "root" $ "container" "driver") | nindent 12 }}
+      volumes:
+        {{- if .Values.node.kerberos.enabled }}
+        # hostPath, not a Secret: the machine account's keytab belongs to the
+        # node and never passes through the Kubernetes API.
+        # FileOrCreate by default: with File, a node missing either file had
+        # its node plugin refused by the kubelet, and no volume of any class
+        # could mount there. An empty placeholder lets the plugin run;
+        # a Kerberos mount on that node is refused with a clear message
+        # (-kerberos-keytab). File restores the strict behaviour.
+        - name: krb5-keytab
+          hostPath:
+            path: {{ .Values.node.kerberos.keytabPath }}
+            type: {{ .Values.node.kerberos.hostPathType | default "FileOrCreate" }}
+        - name: krb5-conf
+          hostPath:
+            path: {{ .Values.node.kerberos.krb5ConfPath }}
+            type: {{ .Values.node.kerberos.hostPathType | default "FileOrCreate" }}
+        {{- end }}
+        - name: plugin-dir
+          hostPath:
+            path: {{ $pluginDir }}
+            type: DirectoryOrCreate
+        - name: registration-state
+          emptyDir: {}
+        - name: registration-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/plugins_registry
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}
+            type: Directory
+      {{- with .Values.node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.node.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.node.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

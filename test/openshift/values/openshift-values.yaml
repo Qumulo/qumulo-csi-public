@@ -1,0 +1,81 @@
+# Helm values for installing qumulo-csi-driver on OpenShift Container Platform
+# 4.22 (Kubernetes 1.35.x) on RHCOS workers.
+#
+# There is no SCC binding to run alongside this. The chart renders the node
+# plugin's SCC and grants it to the node ServiceAccount itself, and it drops
+# the controller's fixed uid so restricted-v2 assigns one -- so the install is
+# admissible by what it ships. Every one of those claims is evaluated against a
+# model of OpenShift admission by the suite in the parent directory, rather
+# than asserted here.
+#
+# Everything below is either a default restated because OpenShift makes it
+# load-bearing, or a deliberate difference.
+
+openshift:
+  # `auto` detects the platform from the cluster's API list, which is right for
+  # `helm install` and wrong for every offline render -- `helm template`, a
+  # GitOps dry run, and this suite see no cluster and would silently produce
+  # the plain-Kubernetes install. Stated explicitly for that reason.
+  enabled: true
+
+  # OpenShift's default SCC for ordinary workloads. The chart drops the
+  # controller's runAsUser/runAsGroup for any restricted* SCC, because those
+  # assign a uid from the namespace range and refuse any other -- 65532
+  # included. Pinning a non-assigning SCC here (nonroot-v2, anyuid, privileged)
+  # keeps the fixed uid instead, which is also correct. The choice follows the
+  # name by default; openshift.assignControllerUID overrides it for a custom
+  # SCC whose name does not say (see openshift-values-gatekeeper.yaml).
+  controllerSCC: restricted-v2
+
+  nodeSCC:
+    # The chart's own SCC: privileged, host network and hostPath, and nothing
+    # beyond what mounting NFS in the host namespace needs. Set false and name
+    # an admin-managed SCC instead where SCCs are centrally governed.
+    create: true
+    name: ""
+
+# RHCOS runs a stock kubelet, so the chart default is already right. Restated
+# because getting this wrong produces a DaemonSet that rolls out green and
+# never registers, and on OpenShift the temptation to "fix" the path for
+# RHCOS is real.
+node:
+  kubeletDir: /var/lib/kubelet
+
+  # Kerberos stays off. On RHCOS rpc.gssd is a MachineConfig change and keytab
+  # distribution is a security decision, neither of which a values file can
+  # make.
+  kerberos:
+    enabled: false
+
+sidecars:
+  # OpenShift already ships the external-snapshotter CRDs and a cluster
+  # snapshot-controller through cluster-storage-operator. Turning the sidecar
+  # on is correct; the chart creates only the VolumeSnapshotClass and never the
+  # CRDs, which is what makes that safe.
+  snapshotter:
+    enabled: true
+
+  # OFF, and not merely by inheritance. Despite the API group names
+  # (replication.storage.openshift.io, csiaddons.openshift.io), plain OpenShift
+  # does not ship csi-addons -- it arrives with OpenShift Data Foundation, at
+  # ODF's own version and cluster-scoped. Enabling it on an ODF cluster is a
+  # CRD version conflict; on a non-ODF cluster it needs csi-addons installed
+  # first. Settle the customer's ODF status before changing this.
+  csiAddons:
+    enabled: false
+
+metrics:
+  # OFF until user-workload monitoring is confirmed enabled on the cluster
+  # (enableUserWorkload: true in the cluster-monitoring-config ConfigMap).
+  # With it off, the chart still creates the ServiceMonitor and PrometheusRule
+  # and OpenShift silently ignores them -- the one failure mode in this install
+  # that looks exactly like success.
+  enabled: false
+
+# No storage classes here: server, basePath and the Secret are site data. Note
+# for whoever adds them -- leave mountPermissions at the 0777 default.
+# OpenShift runs workload pods under a random namespace-assigned uid with gid
+# 0, and fsGroupPolicy is None, so the kubelet does no recursive chown.
+# Anything stricter, or "inherit", is permission-denied for ordinary OpenShift
+# workloads. The suite fails the install if this file ever sets one.
+storageClasses: []

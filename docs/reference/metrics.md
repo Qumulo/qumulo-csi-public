@@ -312,10 +312,11 @@ Thresholds: `metrics.prometheusRule.recoveryPointAgeSeconds` (900),
 
 ## Dashboard
 
-A starter Grafana dashboard ships with these docs:
-[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json). Import it
-and pick a Prometheus datasource; it has a `datasource` variable and needs no
-editing.
+The chart's `dashboards/qumulo-csi.json` (a copy:
+[`qumulo-csi-dashboard.json`](../assets/qumulo-csi-dashboard.json)), shipped as a ConfigMap with
+`metrics.dashboard.enabled` (labelled for the kube-prometheus-stack Grafana
+sidecar by default; see [Monitoring](../operate/monitor.md#dashboard) for the
+OpenShift console). It has a `datasource` variable and needs no editing.
 
 ## What is not exported
 

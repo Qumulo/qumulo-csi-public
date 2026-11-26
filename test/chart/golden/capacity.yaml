@@ -1,0 +1,1259 @@
+---
+# Source: qumulo-csi-driver/templates/priorityclass.yaml
+# The node pods' PriorityClass. Cluster-scoped, and removed with the
+# release. By default it never preempts: the node plugin does not evict
+# workloads to fit, it only keeps ordinary pods from preempting it. The cost:
+# a node plugin pod re-rolled onto a packed node can stay Pending,
+# and that node then has no plugin, so no Qumulo volume on it can mount or
+# unmount. node.priorityClass.preemptionPolicy: PreemptLowerPriority, as
+# system-node-critical has, trades the other way. An existing class keeps the
+# policy it was made with, because the field is immutable.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-node-critical
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+value: 1000000000
+globalDefault: false
+preemptionPolicy: Never
+description: "Qumulo CSI node plugin: mounts and unmounts every Qumulo volume on its node."
+---
+# Source: qumulo-csi-driver/templates/controller.yaml
+# A drain evicts one controller at a time, so a standby is always left to
+# take the leases. Only with more than one replica: with one, a PDB
+# would block every drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: controller
+spec:
+  maxUnavailable: 1
+  # A replica that is Running but not Ready -- a crash-looping or wedged
+  # controller -- may always be evicted. With the default (IfHealthyBudget) a
+  # drain would wait on it whenever the other replica was also unready, and
+  # a node drain or cluster upgrade would hang on a pod that serves nothing.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qumulo-csi-driver
+      app.kubernetes.io/instance: qumulo-csi
+      app.kubernetes.io/component: controller
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+# The node service makes no Kubernetes API calls and no Qumulo API calls. It
+# gets an identity for auditing, and no permissions at all.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-node
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+---
+# Source: qumulo-csi-driver/templates/test-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-test
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+automountServiceAccountToken: false
+---
+# Source: qumulo-csi-driver/templates/storageclass.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-a
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+  annotations:
+    helm.sh/resource-policy: keep
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+# Expansion is a quota change on the cluster with no node-side step, so it is
+# safe to allow by default.
+allowVolumeExpansion: true
+# WaitForFirstConsumer buys nothing: an NFS export is reachable from every node,
+# so there is no topology for the scheduler to resolve.
+volumeBindingMode: Immediate
+parameters:
+  # The address nodes mount from. It defaults to the management endpoint, but
+  # can differ -- NFS traffic often goes via a floating IP that the REST API
+  # does not.
+  # Mandatory: this driver keeps no fallback cluster, so a class that names no
+  # server can never be provisioned. Failing at render time puts that in front
+  # of whoever is editing the values file.
+  server: "cluster-a.example.com"
+  # basePath is the cluster filesystem path; exportBasePath is how that parent
+  # is reachable over NFS. They coincide unless the export is mounted somewhere
+  # other than the filesystem root, so exportBasePath defaults to basePath.
+  storeRealPath: "/csi/a"
+  storeExportPath: "/csi/a"
+  # Per-cluster credential. The sidecars consume these keys and deliver the
+  # Secret's contents in each RPC's secrets map, which is how one controller
+  # authenticates to several clusters. provisioner-* is also what DeleteVolume
+  # gets, so the reference must not depend on a PVC that will be gone by then.
+  csi.storage.k8s.io/provisioner-secret-name: "qumulo-cluster-a"
+  csi.storage.k8s.io/provisioner-secret-namespace: "qumulo-csi"
+  csi.storage.k8s.io/controller-expand-secret-name: "qumulo-cluster-a"
+  csi.storage.k8s.io/controller-expand-secret-namespace: "qumulo-csi"
+mountOptions:
+  - hard
+  - timeo=600
+---
+# Source: qumulo-csi-driver/templates/storageclass.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-b
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+  annotations:
+    helm.sh/resource-policy: keep
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+# Expansion is a quota change on the cluster with no node-side step, so it is
+# safe to allow by default.
+allowVolumeExpansion: true
+# WaitForFirstConsumer buys nothing: an NFS export is reachable from every node,
+# so there is no topology for the scheduler to resolve.
+volumeBindingMode: Immediate
+parameters:
+  # The address nodes mount from. It defaults to the management endpoint, but
+  # can differ -- NFS traffic often goes via a floating IP that the REST API
+  # does not.
+  # Mandatory: this driver keeps no fallback cluster, so a class that names no
+  # server can never be provisioned. Failing at render time puts that in front
+  # of whoever is editing the values file.
+  server: "cluster-b.example.com"
+  # basePath is the cluster filesystem path; exportBasePath is how that parent
+  # is reachable over NFS. They coincide unless the export is mounted somewhere
+  # other than the filesystem root, so exportBasePath defaults to basePath.
+  storeRealPath: "/csi/b"
+  storeExportPath: "/csi/b"
+  # Per-cluster credential. The sidecars consume these keys and deliver the
+  # Secret's contents in each RPC's secrets map, which is how one controller
+  # authenticates to several clusters. provisioner-* is also what DeleteVolume
+  # gets, so the reference must not depend on a PVC that will be gone by then.
+  csi.storage.k8s.io/provisioner-secret-name: "qumulo-cluster-b"
+  csi.storage.k8s.io/provisioner-secret-namespace: "qumulo-csi"
+  csi.storage.k8s.io/controller-expand-secret-name: "qumulo-cluster-b"
+  csi.storage.k8s.io/controller-expand-secret-namespace: "qumulo-csi"
+mountOptions:
+  - hard
+  - timeo=600
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+# The RoleBindings and the ClusterRoleBinding that give these roles to the
+# service accounts are in rbac-bindings.yaml, all in one place, so that
+# rbac.createBindings=false can leave every one of them to a platform team.
+#
+# Permissions required by the deployed sidecars, scoped to what they actually
+# call. There is no attacher, so no volumeattachments. The snapshot resources
+# appear only when sidecars.snapshotter.enabled is set.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+rules:
+  # Per-cluster API tokens. csi-provisioner and csi-resizer read the Secret a
+  # StorageClass names in csi.storage.k8s.io/*-secret-name and deliver its
+  # contents in the RPC's secrets map -- which is how one controller
+  # authenticates to several Qumulo clusters.
+  #
+  # With sidecars.capacity.enabled, the driver container reads the same Secrets
+  # itself. That needs no extra rule: every container in the pod shares this
+  # ServiceAccount, so the driver already had this right and capacity reporting
+  # adds no privilege. It only changes which container exercises it: the
+  # request names the Secret to read, so the driver resolves a reference rather
+  # than searching for one. ListVolumes and ControllerGetVolume name no Secret,
+  # and are served only with controller.inventory.enabled, which reads this
+  # driver's StorageClasses, PersistentVolumes and their provisioner Secrets
+  # through this ClusterRole -- again no extra rule.
+  #
+  # Cluster-wide only on request (rbac.clusterWideSecrets): six containers
+  # share this ServiceAccount, and a compromise of any one could read any
+  # Secret it could name. By default the controller may read exactly
+  # the Secrets this release's classes name, through the namespaced Roles at
+  # the end of this file.
+  # csi-provisioner --enable-capacity creates, updates and deletes one of these
+  # per StorageClass. Only granted when capacity reporting is on, so a release
+  # that does not use it carries no write access to a cluster-wide resource.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csistoragecapacities"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The pod -> ReplicaSet walk --capacity-ownerref-level=2 makes is granted in
+  # the namespaced -controller-self Role below: it only ever reads this pod.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims/status"]
+    verbs: ["patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  # csi-provisioner v6 and csi-resizer v2 turn their VolumeAttributesClass
+  # gate on by themselves whenever the cluster serves storage.k8s.io/v1
+  # VolumeAttributesClass -- every cluster this chart installs on (1.35+).
+  # The provisioner then reads the class a claim names, through an informer;
+  # without list/watch here that informer is refused and retried for ever.
+  # Upstream's RBAC for both sidecars carries this rule. Read-only, and it
+  # adds no behaviour: the driver advertises no MODIFY_VOLUME, so the
+  # resizer starts no modify controller and no ControllerModifyVolume is sent.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattributesclasses"]
+    verbs: ["get", "list", "watch"]
+  # What client-go's event recorder uses; nothing reads one by name.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get", "list", "watch"]
+  # No cluster-wide pods access. Nothing in this pod lists or watches
+  # pods: csi-resizer's pod informer runs only with handle-volume-inuse-error,
+  # which the chart turns off; csi-snapshotter reads none; and the two
+  # sidecars that read a pod read their own, through the -controller-self
+  # Role below. A cluster-wide list/watch here let the controller read every
+  # pod spec in the cluster, environment variables included.
+---
+# Source: qumulo-csi-driver/templates/test-rbac.yaml
+# CSINode is cluster-scoped. Named with the namespace, like the node SCC, so
+# two releases of one name in different namespaces do not share it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qumulo-csi-qumulo-csi-qumulo-csi-driver-test
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["list"]
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-controller
+    namespace: qumulo-csi
+roleRef:
+  kind: ClusterRole
+  name: qumulo-csi-qumulo-csi-driver-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-qumulo-csi-driver-test
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: qumulo-csi-qumulo-csi-qumulo-csi-driver-test
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-test
+    namespace: qumulo-csi
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+# What the controller's sidecars read about their own pod, in their own
+# namespace. Namespaced rather than on the ClusterRole: each of these
+# reads names this pod, its ReplicaSet or its Deployment, never anything
+# elsewhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller-self
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+rules:
+  # csi-provisioner --capacity-ownerref-level=2 walks pod -> ReplicaSet ->
+  # Deployment to find the owner to stamp on its CSIStorageCapacity objects.
+  # The csi-addons sidecar reads its own pod (--pod/--namespace) and walks the
+  # same chain to own the CSIAddonsNode it registers.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get"]
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+# Leader election is namespace-scoped: the Leases live alongside the
+# Deployment, so this is a Role rather than a ClusterRole. Rendered with
+# csi-addons on even when controller.leaderElection is off: that sidecar runs
+# its own election whenever the driver serves the controller, and without
+# Lease rights it got 403 every 5 s and no VolumeReplication was served.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "watch", "list", "delete", "update", "create"]
+---
+# Source: qumulo-csi-driver/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller-secrets
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      - "qumulo-cluster-a"
+      - "qumulo-cluster-b"
+---
+# Source: qumulo-csi-driver/templates/test-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-test
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+rules:
+  # ready-check polls both workloads with GETs and watches nothing.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["qumulo-csi-qumulo-csi-driver-controller"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    resourceNames: ["qumulo-csi-qumulo-csi-driver-node"]
+    verbs: ["get"]
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller-self
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-controller
+    namespace: qumulo-csi
+roleRef:
+  kind: Role
+  name: qumulo-csi-qumulo-csi-driver-controller-self
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-controller
+    namespace: qumulo-csi
+roleRef:
+  kind: Role
+  name: qumulo-csi-qumulo-csi-driver-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller-secrets
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-controller
+    namespace: qumulo-csi
+roleRef:
+  kind: Role
+  name: qumulo-csi-qumulo-csi-driver-controller-secrets
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: qumulo-csi-driver/templates/rbac-bindings.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-test
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: qumulo-csi-qumulo-csi-driver-test
+subjects:
+  - kind: ServiceAccount
+    name: qumulo-csi-qumulo-csi-driver-test
+    namespace: qumulo-csi
+---
+# Source: qumulo-csi-driver/templates/node.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-node
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: node
+  # As on the controller: the driver's liveness probe reads the liveness-probe
+  # sidecar's /healthz on node.healthPort, declared on that sidecar; a second
+  # declaration on the driver is a duplicate-port warning on every install.
+  annotations:
+    ignore-check.kube-linter.io/liveness-port: "the driver probes the /healthz of the liveness-probe sidecar on node.healthPort, declared on that sidecar in the same pod"
+spec:
+  # A node pod counts as available only once it has been Ready this long, and
+  # Ready means the kubelet registered the plugin: the driver's readiness probe
+  # passes only after the kubelet's first NodeGetInfo. Without both, a build
+  # that started but never registered (a wrong kubeletDir) rolled across every
+  # node, and every node lost mount and unmount for every array.
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qumulo-csi-driver
+      app.kubernetes.io/instance: qumulo-csi
+      app.kubernetes.io/component: node
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: qumulo-csi-driver-0.1.2
+        app.kubernetes.io/name: qumulo-csi-driver
+        app.kubernetes.io/instance: qumulo-csi
+        app.kubernetes.io/version: "0.1.2"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/part-of: qumulo-csi-driver
+        app.kubernetes.io/component: node
+    spec:
+      serviceAccountName: qumulo-csi-qumulo-csi-driver-node
+      # The node service never calls the Kubernetes API (every client the
+      # driver builds is controller-only, cmd/qumulo-csi-driver/main.go), and
+      # neither sidecar here does. A token on a privileged pod on every worker
+      # would be an API credential nothing uses.
+      automountServiceAccountToken: false
+      # Explicit rather than inherited. The driver drains in-flight RPCs for
+      # shutdownGracePeriod (10s) and then stops outright, so this only has to
+      # be comfortably larger; stating it keeps the relationship between the
+      # two numbers visible instead of one silently depending on Kubernetes'
+      # 30s default.
+      terminationGracePeriodSeconds: 30
+      priorityClassName: "qumulo-csi-qumulo-csi-driver-node-critical"
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      # The kubelet talks to this plugin over a host path, and the mounts it
+      # creates have to be visible in the host namespace.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.18.1@sha256:f847fb218cdf1d0f0fa79772ca6f46e11d25635eb49c06efb5dccd00b5245ef5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          args:
+            - --csi-address=/csi/csi.sock
+            # The path as the *kubelet* sees it, not as this container does.
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.qumulo.com/csi.sock
+            # Its /healthz calls GetInfo on the registrar's own registration
+            # socket. That is this container's health -- a registrar whose
+            # socket is gone is restarted, and recreates it -- and is what the
+            # probes below read. It is NOT the plugin's registration: it stayed
+            # green through a wrong kubeletDir, so the pod's readiness also
+            # needs the driver container's registration marker below.
+            # A host port (hostNetwork), bound to the node's own address only.
+            # No pprof (no --enable-pprof).
+            - --http-endpoint=$(POD_IP):29659
+            - --v=2
+          ports:
+            - name: registrar
+              containerPort: 29659
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: registrar
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: registrar
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 64Mi
+            requests:
+              cpu: 5m
+              ephemeral-storage: 16Mi
+              memory: 64Mi
+
+        - name: liveness-probe
+          image: registry.k8s.io/sig-storage/livenessprobe:v2.20.1@sha256:d06ac4f9242654f278d9c8a4e343b0516542bfc614218d469959c6428765e97f
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          args:
+            - --csi-address=/csi/csi.sock
+            # A host port, on the node's own address only, not every
+            # interface of the host, the same as the metrics port.
+            - --http-endpoint=$(POD_IP):29653
+          ports:
+            - name: healthz
+              containerPort: 29653
+          # This container's own health: its listener accepts connections. Not
+          # /healthz, which reports the driver's health; the driver container
+          # probes that.
+          livenessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 64Mi
+            requests:
+              cpu: 5m
+              ephemeral-storage: 16Mi
+              memory: 64Mi
+
+        - name: qumulo-csi-driver
+          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-node:0.1.2
+          securityContext:
+            privileged: true
+          imagePullPolicy: Always
+          # No Qumulo credentials here, and none needed: the node service never
+          # calls the REST API. That is what keeps a cluster-wide API token off
+          # every worker.
+          args:
+            - -mode=node
+            - -endpoint=unix:///csi/csi.sock
+            - -drivername=csi.qumulo.com
+            - -nodeid=$(NODE_ID)
+            - -log-level=info
+            # Written on the kubelet's first NodeGetInfo; the readiness probe
+            # below checks it.
+            - -registration-marker=/run/qumulo-csi/registered
+          env:
+            # spec.nodeName, not the container hostname: the node's name is
+            # what the CO matches a volume's topology against.
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          # Liveness comes from the liveness-probe sidecar, which calls the CSI
+          # Identity.Probe RPC over the shared socket and serves the result on
+          # node.healthPort. That RPC deliberately never contacts the Qumulo cluster
+          # (see IdentityServer.Probe: a probe that did contact the cluster
+          # once reported "Ready" for 36 minutes with a dead token), so this
+          # restarts the container for a wedged driver, not for an
+          # unreachable cluster.
+          #
+          # The port is numeric rather than named because the name is declared
+          # on the sidecar, not here -- and a numeric port is all that is
+          # needed, since containers in a pod share a network namespace. An
+          # earlier note claimed the probe was impossible for that reason; it
+          # is not, and without it the sidecar served /healthz that nothing
+          # ever read.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 29653
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          # Ready only once the kubelet has registered the plugin. The kubelet
+          # calls NodeGetInfo after it picks up the registrar's socket and
+          # before it writes CSINode; the driver records that call in the
+          # marker. A socket in a directory the kubelet does not watch never
+          # gets that call, so the pod stays NotReady and the rollout stops at
+          # the first node instead of reaching every node.
+          readinessProbe:
+            exec:
+              command:
+                - /qumulo-csi-driver
+                - -check-registration=/run/qumulo-csi/registered
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            # Pod-scoped: kept across a driver-container restart (which
+            # brings no new NodeGetInfo), gone with the pod.
+            - name: registration-state
+              mountPath: /run/qumulo-csi
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet
+              # Bidirectional so a mount made here propagates back to the host
+              # and into the pods that asked for it. Without it the volume
+              # mounts inside this container and nowhere else.
+              mountPropagation: Bidirectional
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 256Mi
+            requests:
+              cpu: 20m
+              ephemeral-storage: 16Mi
+              memory: 256Mi
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/csi.qumulo.com
+            type: DirectoryOrCreate
+        - name: registration-state
+          emptyDir: {}
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+      tolerations:
+        - operator: Exists
+---
+# Source: qumulo-csi-driver/templates/controller.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-controller
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: controller
+  # kube-linter reads a probe's port against the probed container's own ports.
+  # The driver's probes read /healthz on 29652, which the liveness-probe
+  # sidecar in the same pod serves and declares; declaring it on the driver
+  # too makes the API server warn about a duplicate port on every install.
+  annotations:
+    ignore-check.kube-linter.io/liveness-port: "the driver probes the /healthz of the liveness-probe sidecar on 29652, declared on that sidecar in the same pod"
+    ignore-check.kube-linter.io/readiness-port: "the driver probes the /healthz of the liveness-probe sidecar on 29652, declared on that sidecar in the same pod"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qumulo-csi-driver
+      app.kubernetes.io/instance: qumulo-csi
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: qumulo-csi-driver-0.1.2
+        app.kubernetes.io/name: qumulo-csi-driver
+        app.kubernetes.io/instance: qumulo-csi
+        app.kubernetes.io/version: "0.1.2"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/part-of: qumulo-csi-driver
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: qumulo-csi-qumulo-csi-driver-controller
+      # Explicit rather than inherited. The driver waits up to
+      # shutdownGracePeriod (10s) for in-flight handlers and then stops
+      # outright, so this only has to be comfortably larger. The wait does not
+      # let an RPC finish -- the sidecars exit on the same signal and its
+      # context is cancelled at once -- so it covers rollbacks, which run on a
+      # context of their own.
+      terminationGracePeriodSeconds: 90
+      # The controller serves every storage operation in the cluster; evicted
+      # first under node pressure as BestEffort, it stopped them all.
+      priorityClassName: "system-cluster-critical"
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: csi-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner:v6.4.1@sha256:9e76a2c599ffd7a66f08feeb62ddec61e3545eaa442f8f8f6a495569c0b06829
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout=60s
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            
+            - --extra-create-metadata
+            # Publishes one CSIStorageCapacity object per StorageClass, from
+            # this driver's GetCapacity. The ownerref level is 2 because the
+            # objects are owned by the Deployment that owns this pod's
+            # ReplicaSet -- pod -> ReplicaSet -> Deployment -- so they are
+            # garbage-collected when the release is removed.
+            - --enable-capacity
+            - --capacity-ownerref-level=2
+            # Required, not optional, for this chart. The sidecar skips any
+            # StorageClass with volumeBindingMode: Immediate unless this is
+            # set, and every class this chart renders is Immediate -- an NFS
+            # export is reachable identically from every node, so there is no
+            # topology for the scheduler to resolve. Without this flag the
+            # Capacity Controller starts, logs that it started, and then
+            # publishes nothing at all: the feature is inert and silent.
+            #
+            # The flag's own help text is the honest description of what this
+            # feature is here: "Not needed for the Kubernetes scheduler, maybe
+            # useful for other consumers or for debugging."
+            - --capacity-for-immediate-binding
+            # Always on: it serves the /healthz/leader-election the probes below
+            # read, and the sidecar's own metrics (csi_sidecar_operations_seconds,
+            # how long *this container* waited on an RPC, retries included),
+            # which only metrics.enabled publishes through a Service. pprof
+            # stays off (no --enable-pprof).
+            #
+            # --http-endpoint and not --metrics-address: they are the same
+            # flag, the latter is the deprecated spelling, and csi-lib-utils
+            # refuses to start when both are given.
+            - --http-endpoint=:29656
+            - --v=2
+          # Named after the sidecar, as on the metrics Service: the driver's
+          # port is "metrics", and a pod with two ports of one name warns on
+          # every install and upgrade.
+          ports:
+            - name: provisioner
+              containerPort: 29656
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: provisioner
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: provisioner
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Required by --capacity-ownerref-level: the sidecar walks up from
+            # this pod to find the object that should own the capacity objects.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 512Mi
+            requests:
+              cpu: 5m
+              ephemeral-storage: 16Mi
+              memory: 512Mi
+
+        - name: csi-resizer
+          image: registry.k8s.io/sig-storage/csi-resizer:v2.3.1@sha256:d5b040c2f6ffb25127169feeb845aaf1fa3279e510d71fbebe386b5becc625cc
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          args:
+            - --csi-address=$(ADDRESS)
+            - --timeout=60s
+            - --leader-election
+            - --leader-election-namespace=$(POD_NAMESPACE)
+            
+            # Expansion is a quota change on the cluster, so there is no
+            # node-side step and a volume in use does not block it.
+            - --handle-volume-inuse-error=false
+            # Always on, for the probes below; see the provisioner.
+            - --http-endpoint=:29657
+            - --v=2
+          ports:
+            - name: resizer
+              containerPort: 29657
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: resizer
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: resizer
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 256Mi
+            requests:
+              cpu: 5m
+              ephemeral-storage: 16Mi
+              memory: 256Mi
+        - name: liveness-probe
+          image: registry.k8s.io/sig-storage/livenessprobe:v2.20.1@sha256:d06ac4f9242654f278d9c8a4e343b0516542bfc614218d469959c6428765e97f
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          args:
+            - --csi-address=/csi/csi.sock
+            - --http-endpoint=:29652
+          ports:
+            - name: healthz
+              containerPort: 29652
+          # This container's own health: its listener accepts connections. Not
+          # /healthz, which reports the driver's health -- failing on it would
+          # restart this sidecar for the driver's fault. The driver container
+          # below is the one that probes /healthz.
+          livenessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 128Mi
+            requests:
+              cpu: 5m
+              ephemeral-storage: 16Mi
+              memory: 128Mi
+
+        - name: qumulo-csi-driver
+          image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          imagePullPolicy: Always
+          # controller.resources is this container's, as the schema always said;
+          # it used to reach only the sidecars, leaving the driver -- the one
+          # container whose memory grows with listings and restores -- with no
+          # request at all.
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 1Gi
+            requests:
+              cpu: 20m
+              ephemeral-storage: 16Mi
+              memory: 1Gi
+          # The image defaults to -mode=controller, but the mode is spelled out
+          # here so reading the manifest tells you which role this pod plays.
+          args:
+            - -mode=controller
+            - -endpoint=unix:///csi/csi.sock
+            - -drivername=csi.qumulo.com
+            - -qumulo-api-timeout=10s
+            - -log-level=info
+            # csi-snapshotter's --snapshot-name-prefix: a snapshot named
+            # otherwise is not this driver's to delete without consent.
+            - -snapshot-name-prefix=snapshot
+            # The driver's half of requireAllowedClients: CreateVolume refuses
+            # an open dedicated-export class made outside this chart.
+            - -require-allowed-clients=true
+            # Lets GetCapacity read each StorageClass's provisioner Secret from
+            # the Kubernetes API. Paired with --enable-capacity on the
+            # provisioner above: without that nothing calls the RPC, and
+            # without this the RPC has no credential to answer with.
+            - -enable-capacity
+          # Liveness comes from the liveness-probe sidecar, which calls the CSI
+          # Identity.Probe RPC over the shared socket and serves the result on
+          # :29652. That RPC deliberately never contacts the Qumulo cluster
+          # (see IdentityServer.Probe: a probe that did contact the cluster
+          # once reported "Ready" for 36 minutes with a dead token), so this
+          # restarts the container for a wedged driver, not for an
+          # unreachable cluster.
+          #
+          # The port is numeric rather than named because the name is declared
+          # on the sidecar, not here -- and a numeric port is all that is
+          # needed, since containers in a pod share a network namespace. An
+          # earlier note claimed the probe was impossible for that reason; it
+          # is not, and without it the sidecar served /healthz that nothing
+          # ever read.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 29652
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          # The same Identity.Probe, so a replica whose driver does not answer
+          # on its socket is not counted Ready -- by the rollout, and by the
+          # PodDisruptionBudget below. Like liveness, it never contacts a
+          # Qumulo cluster.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 29652
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+      # Soft: spread the replicas over nodes when the cluster has them, and
+      # still schedule on a single-node cluster. With both on one node, that
+      # node's drain or failure stopped every storage operation.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: qumulo-csi-driver
+                    app.kubernetes.io/instance: qumulo-csi
+                    app.kubernetes.io/component: controller
+---
+# Source: qumulo-csi-driver/templates/csidriver.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: csi.qumulo.com
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+# Two fields below are immutable on a live object and two are not; measured on
+# Kubernetes 1.36.0 and recorded in docs/reference/supported-features.md. attachRequired and
+# volumeLifecycleModes cannot be changed by an upgrade -- changing either in a
+# future chart version means the release has to be removed and reinstalled, so
+# neither is exposed as a value. fsGroupPolicy and podInfoOnMount are mutable.
+#
+# The object is also cluster-scoped and named for driverName, so one cluster
+# holds one of these per driver name: a second release of this chart needs a
+# distinct driverName or it fails on Helm ownership of this object.
+spec:
+  # false because the driver implements no ControllerPublishVolume: an NFS
+  # export needs no per-node attach step. This is also why no csi-attacher is
+  # deployed -- with attachRequired true, every pod would wait on a
+  # VolumeAttachment nothing ever fulfils.
+  attachRequired: false
+
+  # The driver does not use pod identity when mounting, so there is nothing for
+  # the kubelet to pass.
+  podInfoOnMount: false
+
+  # Tells the scheduler that CSIStorageCapacity objects exist for this driver.
+  # Mutable, so it can be turned on and off by an upgrade. Note that this chart
+  # sets volumeBindingMode: Immediate on every StorageClass, so the objects are
+  # informational rather than a scheduling input -- see sidecars.capacity in
+  # values.yaml.
+  storageCapacity: true
+
+  fsGroupPolicy: None
+
+  volumeLifecycleModes:
+    # Persistent only. Ephemeral inline volumes would need the node service to
+    # provision, which is exactly the split this driver maintains: node pods
+    # hold no Qumulo credentials.
+    - Persistent
+---
+# Source: qumulo-csi-driver/templates/tests/test-driver-ready.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: qumulo-csi-qumulo-csi-driver-test-ready
+  namespace: qumulo-csi
+  labels:
+    helm.sh/chart: qumulo-csi-driver-0.1.2
+    app.kubernetes.io/name: qumulo-csi-driver
+    app.kubernetes.io/instance: qumulo-csi
+    app.kubernetes.io/version: "0.1.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: qumulo-csi-driver
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: qumulo-csi-qumulo-csi-driver-test
+  # The ServiceAccount turns automounting off; this pod is the one that needs it.
+  automountServiceAccountToken: true
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: driver-ready
+      image: ghcr.io/qumulo/qumulo-csi-public/qumulo-csi-driver-controller:0.1.2
+      imagePullPolicy: Always
+      command:
+        - /qumulo-csi-driver
+        - ready-check
+        - -namespace=qumulo-csi
+        - -driver-name=csi.qumulo.com
+        - -deployment=qumulo-csi-qumulo-csi-driver-controller
+        - -daemonset=qumulo-csi-qumulo-csi-driver-node
+        # One budget for all three checks; Helm's test timeout is 300 s.
+        - -timeout=240s
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: {cpu: 10m, memory: 64Mi, ephemeral-storage: 16Mi}
+        limits: {memory: 64Mi, ephemeral-storage: 64Mi}

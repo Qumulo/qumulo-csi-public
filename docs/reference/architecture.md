@@ -103,7 +103,7 @@ anti-affinity and a PodDisruptionBudget. It implements `CreateVolume`,
 `ControllerGetVolumeHealth`.
 
 It speaks only HTTPS to the Qumulo REST API and touches no filesystem, so it
-runs a distroless image as `USER 65532:65532`.
+runs a minimal UBI micro image as `USER 65532:65532`.
 
 ### Node service
 
@@ -113,8 +113,9 @@ publishing (`NodePublishVolume` / `NodeUnpublishVolume`),
 `NodeGetVolumeStats` and `NodeGetVolumeHealth`.
 
 Mounting is performed by `k8s.io/mount-utils`, which execs `mount(8)` — so the
-node image carries `nfs-common`, `mount` and `netbase`, and uses `tini` as PID 1
-so a helper orphaned by a killed forced unmount is reaped.
+node image (Red Hat UBI 9 micro) carries `nfs-utils` and `util-linux`, installed
+from the RHEL repositories, and uses `tini` as PID 1 so a helper orphaned by a
+killed forced unmount is reaped.
 
 !!! note "No `ControllerPublishVolume`, and therefore no attacher"
     `CSIDriver.attachRequired` is `false`. The driver publishes no
@@ -131,7 +132,7 @@ so a helper orphaned by a killed forced unmount is reaped.
 | `livenessprobe` | always | both pods |
 | `csi-snapshotter` | off | snapshots; needs the cluster-wide snapshot CRDs |
 | external-provisioner capacity mode | off | `CSIStorageCapacity` per StorageClass |
-| `external-health-monitor` | off | polls `ControllerGetVolumeHealth`; needs inventory |
+| `external-health-monitor` | off | polls `ControllerGetVolumeHealth`; needs inventory. The result reaches the claim only on Kubernetes 1.37, where the field is alpha — see [Optional: inventory and health](../operate/observe.md#optional-inventory-and-health) |
 | csi-addons | off | `VolumeReplication` |
 
 !!! warning "`csi-snapshotter` is off by default on purpose"
@@ -182,7 +183,7 @@ flowchart LR
 
 The node service never calls the Qumulo API, so a cluster-wide credential never
 reaches a worker node. This is also why the two images differ: the controller
-is distroless, the node image carries an NFS client userland because
+is UBI micro, the node image carries an NFS client userland because
 `mount(8)` and `mount.nfs` are what perform the mount.
 
 ## Volume handles
@@ -234,9 +235,8 @@ sequenceDiagram
 !!! note "Retries adopt, they do not duplicate"
     A `CreateVolume` cut short by a timeout or a restart is resumed by the
     retry, which adopts the earlier attempt's state — including a create
-    interrupted *between* making the directory and setting its quota.
-    The retry tells its own attempt, an empty directory with no quota, from
-    one that holds data, and adopts only the first; see
+    interrupted *between* making the directory and setting its quota, whose
+    empty, quota-less directory the retry finishes — see
     [Idempotent create in the feature list](../reference/supported-features.md#1-volume-lifecycle).
 
 ## Mount flow

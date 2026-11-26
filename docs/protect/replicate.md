@@ -76,6 +76,32 @@ stateDiagram-v2
     A frozen source refuses new files but **silently drops appends to existing
     ones**.
 
+### Snapshots the array keeps of each revert
+
+A failover (make-writable) and a resync or failback (reconnect) both make the
+target array revert the target directory to its recovery point. Before it
+does, the array saves what was there in a snapshot named
+`<id>_revert_to_<recovery point>_for_<name>`, and it sets no expiry on it.
+The driver gives each one an expiry when it sees it: 7 days by default,
+`sidecars.csiAddons.revertSnapshotRetention` in the chart (`"0s"` leaves
+them never expiring). It is the only copy of what the revert discarded, which
+is why it is kept for a while rather than deleted.
+
+Revert snapshots made before this driver version have no expiry. To find
+them, list the array's snapshots and look for `_revert_to_` in the name with
+an empty `expiration`; give each one an expiry, or delete the ones you do not
+need:
+
+```sh
+# list them: id, name, expiration ("" = never)
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  "https://<array>:8000/v3/snapshots/?filter=exclude_in_delete" |
+  jq -r '.entries[] | select(.name | contains("_revert_to_")) | [.id, .name, .expiration] | @tsv'
+# give one an expiry
+curl -sk -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"expiration":"2026-12-01T00:00:00Z"}' "https://<array>:8000/v3/snapshots/<id>"
+```
+
 ### Planned versus forced failover
 
 A planned promote freezes the source and drains on **data** — a marker
@@ -166,7 +192,8 @@ promoted, are refused whatever the policy says.
 
 ### After a failover: repointing claims
 
-`qumulo-csi-repoint` is a separate binary that repoints DNS-named
+`qumulo-csi-repoint` (**Preview**) is a separate tool, run from a source
+checkout rather than shipped in a release image, that repoints DNS-named
 claims and restarts pods after a failover. It plans from the live cluster by
 default, or from saved objects with `-f` (repeatable; `-` is stdin) — useful
 for a review copy, or to plan where the cluster is unreachable:

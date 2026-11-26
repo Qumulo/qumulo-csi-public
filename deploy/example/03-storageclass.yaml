@@ -1,0 +1,38 @@
+# Step 3 -- a StorageClass naming your cluster and path.
+#
+# Replace the two placeholders:
+#   <qumulo-cluster-address>              e.g. qumulo.example.com
+#   <path-that-already-exists-and-is-exported>   e.g. /csi/volumes
+#
+# The driver creates volume *directories* under this path -- it does not
+# create the path itself, and it does not create the NFS export covering it.
+# Both must already exist on the cluster before step 4.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: qumulo-example
+provisioner: csi.qumulo.com
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+# An NFS export is reachable from every node the same way, so there is no
+# scheduling decision to defer -- Immediate is correct here, not
+# WaitForFirstConsumer.
+volumeBindingMode: Immediate
+parameters:
+  server: <qumulo-cluster-address>
+  storeRealPath: <path-that-already-exists-and-is-exported>
+  storeExportPath: <path-that-already-exists-and-is-exported>
+  protocol: nfs3
+  # The driver only ever authenticates with a per-request Secret -- there is
+  # no cluster-wide credential on this StorageClass. csi-provisioner and
+  # csi-resizer read these two keys and hand the Secret's contents to the
+  # driver on each request.
+  csi.storage.k8s.io/provisioner-secret-name: qumulo-api-token
+  csi.storage.k8s.io/provisioner-secret-namespace: qumulo-csi
+  csi.storage.k8s.io/controller-expand-secret-name: qumulo-api-token
+  csi.storage.k8s.io/controller-expand-secret-namespace: qumulo-csi
+# Required for protocol: nfs3 -- the node image has no rpc.statd, so a mount
+# without nolock hangs. Switch protocol above to nfs4.1 and delete this
+# block instead if you'd rather skip it: v4.1 locks in-protocol.
+mountOptions:
+  - nolock

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: qumulo-nfs41   # use case 6 reuses this file against a team's own class
+  resources:
+    requests:
+      storage: 10Gi

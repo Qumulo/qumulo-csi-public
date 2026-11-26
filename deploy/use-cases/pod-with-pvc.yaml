@@ -1,0 +1,22 @@
+# A generic test pod, referenced as `test-pod` by use-case pages
+# (03-expand-volume) to check a mount from inside a pod.
+#
+# Edit claimName to whichever PVC that page is working with -- app-data for
+# use case 3.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: app-data

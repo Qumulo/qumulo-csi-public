@@ -1,0 +1,105 @@
+# Release csi-addons sidecar: builds our rebuild of the upstream csi-addons
+# k8s-sidecar (build/csi-addons-sidecar/) and publishes it to the public
+# packages, with signed build provenance.
+#
+#   ghcr.io/qumulo/qumulo-csi-public/csi-addons-k8s-sidecar:<CSI_ADDONS_SIDECAR_TAG>
+#
+# The sidecar is versioned on its own `-qumulo.N` tag (CSI_ADDONS_SIDECAR_TAG
+# in the Makefile), not on VERSION, and the chart pins it by digest. A rebuild
+# never reproduces a digest, so this runs on its own, before a driver release
+# that needs it:
+#
+#   1. run this workflow (by hand);
+#   2. pin the `tag@digest` it prints in charts/qumulo-csi-driver/values.yaml
+#      (sidecars.csiAddons.image), regenerate the chart goldens, merge;
+#   3. tag the driver release -- release.yml refuses to start while the pinned
+#      sidecar is not published.
+#
+# A tag that is already published is left as it is (make
+# csi-addons-sidecar-publish); a new rebuild bumps the -qumulo.N suffix.
+#
+# Verify with: gh attestation verify oci://<image>:<tag> --owner Qumulo
+name: Release csi-addons sidecar
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/qumulo/qumulo-csi-public
+
+jobs:
+  sidecar:
+    name: csi-addons sidecar
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the tag
+        id: tag
+        run: |
+          set -euo pipefail
+          tag="$(sed -nE 's/^CSI_ADDONS_SIDECAR_TAG[[:space:]]*\?=[[:space:]]*([^[:space:]]+).*/\1/p' Makefile)"
+          test -n "$tag" || { echo "CSI_ADDONS_SIDECAR_TAG not found in the Makefile" >&2; exit 1; }
+          echo "image=${REGISTRY}/csi-addons-k8s-sidecar" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: make csi-addons-sidecar-publish REGISTRY="$REGISTRY"
+
+      - name: Resolve the digest and check the platforms
+        id: digest
+        env:
+          REF: ${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          digest="sha256:$(docker buildx imagetools inspect --raw "$REF" | sha256sum | cut -d' ' -f1)"
+          have=$(docker buildx imagetools inspect "$REF" --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}')
+          for want in linux/amd64 linux/arm64; do
+            echo " $have " | grep -q " $want " || { echo "${REF} is missing ${want} (has: ${have})" >&2; exit 1; }
+          done
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "${REF}@${digest} (${have})"
+
+      - name: Attest the sidecar image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.tag.outputs.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Summary
+        run: |
+          {
+            echo "### csi-addons sidecar published"
+            echo
+            echo "Pin this in \`charts/qumulo-csi-driver/values.yaml\` (\`sidecars.csiAddons.image\`):"
+            echo
+            echo '```yaml'
+            echo "    image: ${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.tag }}@${{ steps.digest.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

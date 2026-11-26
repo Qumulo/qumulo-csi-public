@@ -1,0 +1,41 @@
+{{- include "qumulo-csi-driver.validate" . -}}
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ .Values.driverName }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+# Two fields below are immutable on a live object and two are not; measured on
+# Kubernetes 1.36.0 and recorded in docs/reference/supported-features.md. attachRequired and
+# volumeLifecycleModes cannot be changed by an upgrade -- changing either in a
+# future chart version means the release has to be removed and reinstalled, so
+# neither is exposed as a value. fsGroupPolicy and podInfoOnMount are mutable.
+#
+# The object is also cluster-scoped and named for driverName, so one cluster
+# holds one of these per driver name: a second release of this chart needs a
+# distinct driverName or it fails on Helm ownership of this object.
+spec:
+  # false because the driver implements no ControllerPublishVolume: an NFS
+  # export needs no per-node attach step. This is also why no csi-attacher is
+  # deployed -- with attachRequired true, every pod would wait on a
+  # VolumeAttachment nothing ever fulfils.
+  attachRequired: false
+
+  # The driver does not use pod identity when mounting, so there is nothing for
+  # the kubelet to pass.
+  podInfoOnMount: false
+
+  # Tells the scheduler that CSIStorageCapacity objects exist for this driver.
+  # Mutable, so it can be turned on and off by an upgrade. Note that this chart
+  # sets volumeBindingMode: Immediate on every StorageClass, so the objects are
+  # informational rather than a scheduling input -- see sidecars.capacity in
+  # values.yaml.
+  storageCapacity: {{ .Values.sidecars.capacity.enabled }}
+
+  fsGroupPolicy: {{ .Values.fsGroupPolicy }}
+
+  volumeLifecycleModes:
+    # Persistent only. Ephemeral inline volumes would need the node service to
+    # provision, which is exactly the split this driver maintains: node pods
+    # hold no Qumulo credentials.
+    - Persistent

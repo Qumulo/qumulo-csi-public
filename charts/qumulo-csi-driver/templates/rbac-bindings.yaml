@@ -1,0 +1,8 @@
+{{- /*
+Every RoleBinding and ClusterRoleBinding of this chart (_bindings.tpl).
+rbac.createBindings=false renders none of them: the platform team applies
+them instead, and the install checks they are there (_validate.tpl).
+*/ -}}
+{{- if include "qumulo-csi-driver.createBindings" . }}
+{{ include "qumulo-csi-driver.bindingManifests" . }}
+{{- end }}

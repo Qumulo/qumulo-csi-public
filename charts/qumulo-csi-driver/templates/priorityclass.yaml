@@ -1,0 +1,30 @@
+{{- include "qumulo-csi-driver.validate" . -}}
+{{- if and (not .Values.node.priorityClassName) (dig "create" true (.Values.node.priorityClass | default dict)) }}
+{{- $pc := printf "%s-node-critical" (include "qumulo-csi-driver.fullname" .) -}}
+{{- $preempt := dig "preemptionPolicy" "" (.Values.node.priorityClass | default dict) -}}
+{{- if not $preempt -}}
+  {{- /* An existing class keeps its own: the field is immutable. */ -}}
+  {{- $preempt = "Never" -}}
+  {{- with lookup "scheduling.k8s.io/v1" "PriorityClass" "" $pc -}}
+    {{- $preempt = .preemptionPolicy | default "PreemptLowerPriority" -}}
+  {{- end -}}
+{{- end }}
+# The node pods' PriorityClass. Cluster-scoped, and removed with the
+# release. By default it never preempts: the node plugin does not evict
+# workloads to fit, it only keeps ordinary pods from preempting it. The cost:
+# a node plugin pod re-rolled onto a packed node can stay Pending,
+# and that node then has no plugin, so no Qumulo volume on it can mount or
+# unmount. node.priorityClass.preemptionPolicy: PreemptLowerPriority, as
+# system-node-critical has, trades the other way. An existing class keeps the
+# policy it was made with, because the field is immutable.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ $pc }}
+  labels:
+    {{- include "qumulo-csi-driver.labels" . | nindent 4 }}
+value: {{ dig "value" 1000000000 (.Values.node.priorityClass | default dict) | int }}
+globalDefault: false
+preemptionPolicy: {{ $preempt }}
+description: "Qumulo CSI node plugin: mounts and unmounts every Qumulo volume on its node."
+{{- end }}
