@@ -15,10 +15,6 @@ a subdirectory beneath it, or as its own NFS export.
 
 ## Documentation
 
-The rendered documentation site is the best way to read the docs:
-
-**<https://qumulo.github.io/qumulo-csi-public/>**
-
 | | |
 |---|---|
 | New here | [Prerequisites](docs/get-started/prerequisites.md) → [Install the driver](docs/get-started/install.md) → [Create your first volume](docs/get-started/first-volume.md) |
